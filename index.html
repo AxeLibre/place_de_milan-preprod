@@ -104,7 +104,6 @@
   body.pedestrian-mode #sun-panel,
   body.pedestrian-mode #legend-window,
   body.pedestrian-mode #admin-panel,
-  body.pedestrian-mode #google-tiles-panel,
   body.pedestrian-mode #bldg-panel,
   body.pedestrian-mode #draw-mode-popout,
   body.pedestrian-mode #grass-brush-popout,
@@ -150,7 +149,6 @@
   body.global-view-mode #sun-panel,
   body.global-view-mode #legend-window,
   body.global-view-mode #admin-panel,
-  body.global-view-mode #google-tiles-panel,
   body.global-view-mode #bldg-panel,
   body.global-view-mode #draw-mode-popout,
   body.global-view-mode #grass-brush-popout,
@@ -221,7 +219,6 @@
   body.architect-mode #sun-panel,
   body.architect-mode #legend-window,
   body.architect-mode #admin-panel,
-  body.architect-mode #google-tiles-panel,
   body.architect-mode #bldg-panel,
   body.architect-mode #draw-mode-popout,
   body.architect-mode #grass-brush-popout,
@@ -783,7 +780,6 @@
   body.construction-mode #ribbon > *:not(#grp-camera):not(#grp-display){ display:none !important; }
   body.construction-mode #camera-group-popout .tool-btn:not(#btn-plan-view),
   body.construction-mode #display-group-popout .tool-btn:not(#btn-toggle-grid):not(#btn-toggle-plu){ display:none !important; }
-  body.construction-mode #google-tiles-panel{ display:none !important; }
   body.construction-mode #left-stack,
   body.construction-mode #legend-window,
   body.construction-mode #sun-panel,
@@ -824,45 +820,6 @@
     font-family:'IBM Plex Mono',monospace;margin-bottom:8px;cursor:pointer;
   }
   .admin-check-row input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer;}
-
-  /* ---------- Panneau "Fond réel (Google 3D)" ---------- */
-  #google-tiles-panel{
-    position:absolute;top:186px;right:16px;z-index:8;width:280px;overflow:visible;
-    background:var(--ink-2);border:1px solid #23303b;border-radius:8px;
-    padding:14px 16px;box-shadow:0 12px 32px rgba(0,0,0,.4);
-    display:none;
-  }
-  #google-tiles-panel.show{display:block;}
-  .gtp-field{
-    display:block;font-size:11px;color:var(--muted);margin-bottom:10px;
-    font-family:'IBM Plex Mono',monospace;
-  }
-  .gtp-field input{
-    display:block;width:100%;margin-top:4px;background:#0b1116;border:1px solid #23303b;
-    color:var(--paper);border-radius:5px;padding:6px 8px;font-family:'IBM Plex Mono',monospace;font-size:12px;
-  }
-  .gtp-hint{font-size:10.5px;line-height:1.5;color:var(--muted);margin-bottom:10px;}
-  .gtp-check-row{
-    display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--paper);
-    font-family:'IBM Plex Mono',monospace;margin-bottom:8px;cursor:pointer;
-  }
-  .gtp-check-row input{accent-color:var(--accent);width:14px;height:14px;cursor:pointer;}
-  .gtp-apply-btn{
-    width:100%;background:transparent;border:1px solid var(--accent);color:var(--accent);
-    border-radius:6px;padding:7px 10px;font-family:'Space Grotesk',sans-serif;font-size:12px;
-    font-weight:600;cursor:pointer;margin-bottom:8px;
-  }
-  .gtp-apply-btn:hover{background:rgba(46,232,255,.14);color:#fff;}
-  .gtp-nudge-row{
-    display:flex;align-items:center;gap:4px;margin-bottom:6px;font-size:11px;color:var(--muted);
-    font-family:'IBM Plex Mono',monospace;
-  }
-  .gtp-nudge-row span{flex:0 0 78px;}
-  .gtp-nudge-row button{
-    flex:1;background:#0b1116;border:1px solid #23303b;color:var(--paper);border-radius:4px;
-    padding:5px 2px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;cursor:pointer;
-  }
-  .gtp-nudge-row button:hover{background:rgba(46,232,255,.14);border-color:var(--accent);color:#fff;}
 
   .section-title{
     font-family:'Space Grotesk',sans-serif;font-size:12px;font-weight:600;
@@ -1452,7 +1409,6 @@
       <button class="tool-btn ghost" id="btn-toggle-legend"><iconify-icon icon="fluent-emoji-flat:artist-palette" width="21" height="21"></iconify-icon><span class="tool-btn-label">Légendes</span></button>
       <button class="tool-btn ghost" id="btn-sun-panel"><iconify-icon icon="fluent-emoji-flat:sun" width="21" height="21"></iconify-icon><span class="tool-btn-label">Éclairage</span></button>
       <button class="tool-btn ghost" id="btn-admin-panel" title="Options d'affichage (véhicules, piétons)"><iconify-icon icon="fluent-emoji-flat:gear" width="21" height="21"></iconify-icon><span class="tool-btn-label">Options d'affichage</span></button>
-      <button class="tool-btn ghost" id="btn-google-tiles" title="Superpose les tuiles 3D photoréalistes de Google (Map Tiles API) sous la maquette, alignées sur les coordonnées GPS réelles — pour visualiser les nouveaux bâtiments dans leur contexte urbain réel. Nécessite une clé API Google Cloud personnelle. Masqué automatiquement en Skyline, Mode Architecte, Vue Globale, Vue plan et Mode piéton."><iconify-icon icon="fluent-emoji-flat:globe-showing-europe-africa" width="21" height="21"></iconify-icon><span class="tool-btn-label">Fond réel (Google 3D)</span></button>
     </div>
     <div id="render-group-popout" class="ribbon-popout">
       <button class="tool-btn ghost" id="btn-global-view" title="Vue Globale : affiche la maquette élargie (global.glb) autour du site, éclairée en plein midi d'équinoxe, avec la même navigation libre que le mode piéton (WASD + souris). Impossible de passer sous la maquette. Échap ou le bouton en haut pour quitter."><iconify-icon icon="fluent-emoji-flat:globe-showing-europe-africa" width="21" height="21"></iconify-icon><span class="tool-btn-label">Global</span></button>
@@ -1600,40 +1556,6 @@
         <div class="legend-item"><div class="swatch-icon"><i data-lucide="trees" style="color:var(--green-stat)"></i></div><span>Arbres plantés</span><span class="legend-m2" id="legend-tree-count">0</span></div>
       </div>
     </div>
-    <div id="google-tiles-panel">
-      <button class="panel-x-btn" id="google-tiles-panel-close" title="Fermer" style="position:absolute;top:8px;right:8px;z-index:2;"><i data-lucide="x"></i></button>
-      <div class="section-title">Fond réel (Google 3D)</div>
-      <label class="gtp-field">Clé API Google Cloud (Map Tiles API)
-        <input type="password" id="gtp-api-key" placeholder="AIza...">
-      </label>
-      <div class="gtp-hint">Clé personnelle, avec facturation et « Map Tiles API » activées côté Google Cloud. Stockée uniquement dans ce navigateur (localStorage), jamais envoyée ailleurs qu'à Google.</div>
-      <label class="gtp-check-row"><input type="checkbox" id="gtp-enable"> Afficher les tuiles Google (vue « Maquette 3D » uniquement)</label>
-      <div id="gtp-status" class="gtp-hint"></div>
-      <div class="section-title">Calage GPS du point d'origine (0,0,0)</div>
-      <label class="gtp-field">Latitude<input type="number" id="gtp-lat" step="0.000001"></label>
-      <label class="gtp-field">Longitude<input type="number" id="gtp-lon" step="0.000001"></label>
-      <label class="gtp-field">Altitude ellipsoïdale WGS84 (m)<input type="number" id="gtp-height" step="1"></label>
-      <button class="gtp-apply-btn" id="gtp-apply-anchor">Appliquer et recharger les tuiles</button>
-      <div class="gtp-hint">Valeurs approximatives par défaut (secteur Part-Dieu) — à corriger avec un point relevé sur Google Maps (clic droit → coordonnées) correspondant exactement à l'origine de la maquette. Affinez ensuite visuellement avec les réglages fins ci-dessous.</div>
-      <div class="section-title">Réglages fins (sans recharger)</div>
-      <div class="gtp-nudge-row">
-        <span>Nord / Sud</span>
-        <button data-gtp-nudge="z:-10">-10m</button><button data-gtp-nudge="z:-1">-1m</button><button data-gtp-nudge="z:1">+1m</button><button data-gtp-nudge="z:10">+10m</button>
-      </div>
-      <div class="gtp-nudge-row">
-        <span>Est / Ouest</span>
-        <button data-gtp-nudge="x:-10">-10m</button><button data-gtp-nudge="x:-1">-1m</button><button data-gtp-nudge="x:1">+1m</button><button data-gtp-nudge="x:10">+10m</button>
-      </div>
-      <div class="gtp-nudge-row">
-        <span>Hauteur</span>
-        <button data-gtp-nudge="y:-5">-5m</button><button data-gtp-nudge="y:-1">-1m</button><button data-gtp-nudge="y:1">+1m</button><button data-gtp-nudge="y:5">+5m</button>
-      </div>
-      <div class="gtp-nudge-row">
-        <span>Orientation (cap)</span>
-        <button data-gtp-nudge="rot:-1">-1°</button><button data-gtp-nudge="rot:-0.1">-0,1°</button><button data-gtp-nudge="rot:0.1">+0,1°</button><button data-gtp-nudge="rot:1">+1°</button>
-      </div>
-      <button class="gtp-apply-btn" id="gtp-reset-nudge" title="Remet à zéro les réglages fins (position et orientation), sans toucher au calage GPS ci-dessus">Réinitialiser les réglages fins</button>
-    </div>
     <div id="admin-panel">
       <button class="panel-x-btn" id="admin-panel-close" title="Fermer" style="position:absolute;top:8px;right:8px;z-index:2;"><i data-lucide="x"></i></button>
       <div class="section-title">Éléments visibles sur la maquette</div>
@@ -1737,10 +1659,7 @@
 {
   "imports": {
     "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-    "three/examples/jsm/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-    "3d-tiles-renderer": "https://unpkg.com/3d-tiles-renderer@0.3.46/src/index.js",
-    "3d-tiles-renderer/plugins": "https://unpkg.com/3d-tiles-renderer@0.3.46/src/plugins/index.js"
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
   }
 }
 </script>
@@ -1753,12 +1672,6 @@ import { mergeVertices, mergeGeometries } from "three/addons/utils/BufferGeometr
 import { Line2 } from "three/addons/lines/Line2.js";
 import { LineGeometry } from "three/addons/lines/LineGeometry.js";
 import { LineMaterial } from "three/addons/lines/LineMaterial.js";
-// Fond réel "Google 3D" (tuiles photoréalistes) — voir section dédiée avant
-// animate(). Version 0.3.46 choisie volontairement : c'est la dernière à
-// accepter three@0.160.0 (celui déjà utilisé ici) sans avoir à monter de
-// version three et risquer de casser le reste de l'app.
-import { TilesRenderer } from "3d-tiles-renderer";
-import { GoogleCloudAuthPlugin, ReorientationPlugin } from "3d-tiles-renderer/plugins";
 
 /* ============================================================
    CONFIG
@@ -1804,36 +1717,63 @@ const GROUND_SIZE = 260; // metres, schematic default extent around the îlot
 let legendEnabled = false;
 
 // ============================================================
-// FENÊTRES ALLUMÉES LA NUIT — NOUVEAUX BÂTIMENTS (matériau "glass" cloné)
+// FAÇADES DES NOUVEAUX BÂTIMENTS — matériau "glass" procédural
 // ============================================================
-// Au niveau du MATÉRIAU (pas de géométrie en plus, pas de mesh par fenêtre) :
-// une petite texture canvas générée une seule fois par hauteur d'étage
-// rencontrée, posée en emissiveMap et répétée via RepeatWrapping. Astuce clé :
+// Le matériau "glass" des nouveaux bâtiments calcule désormais, PAR
+// FRAGMENT (onBeforeCompile — même principe que le bâti existant plus bas),
+// une grille de baies à l'échelle réelle du monde (mètres). Cette grille sert
+// à la fois à l'APPARENCE DE JOUR (verre coloré brillant dans les baies,
+// blanc cassé mat pour le reste de la façade) et à L'ALLUMAGE DE NUIT
+// (émissif dans les mêmes baies) — un seul calcul de formes de fenêtres pour
+// les deux, au lieu d'une texture canvas séparée comme avant.
 // ExtrudeGeometry mappe l'UV des faces latérales directement sur les
-// coordonnées MONDE (mètres), pas en 0..1 — donc texture.repeat réglé en
-// "1 / mètres" donne une échelle de fenêtres cohérente ET à l'échelle réelle
-// de la maquette, sans rien recalculer à la main par bâtiment.
-//
-// Échelle calée sur le matériau "glass" tel que modélisé dans
-// place_de_milan.glb : baies de 1 m de large, quasi pleine hauteur d'étage.
-// La hauteur de la tuile suit la hauteur de plancher RÉELLE de l'usage du
-// bâtiment (résidentiel 3m / hôtel 3.5m / bureaux, commerces, services 4m —
-// voir floorHeightFor) pour que les lignes de fenêtres tombent pile sur
-// chaque étage.
-const GLASS_BAY_WIDTH_M = 1;       // largeur d'une baie, cf. matériau "glass" du .glb (1m de large)
-const GLASS_BAYS_PER_TILE = 9;     // nb de baies (largeur) avant répétition — évite qu'un étage entier s'allume d'un bloc
-const GLASS_FLOORS_PER_TILE = 6;   // nb d'étages couverts avant que le motif ne se répète (variété)
-const GLASS_PX_PER_METER = 24;     // résolution du canvas — largement suffisant pour un emissiveMap
+// coordonnées MONDE (mètres) mais on recalcule ici la position monde par
+// fragment (vWorldPosNW) plutôt que de s'appuyer sur ces UV, pour pouvoir
+// piloter la grille avec des paramètres en mètres.
 const GLASS_WINDOW_EMISSIVE_INTENSITY = 1.6;
 const GLASS_WINDOW_LIT_PROB = 0.38; // proportion de baies allumées la nuit (usages "aléatoire" uniquement)
-const GLASS_WINDOW_VARIANTS = 6;    // nb de motifs distincts généré par hauteur d'étage, pour ne pas avoir
-                                     // deux bâtiments de même usage strictement identiques la nuit
 // Usages dont TOUTES les fenêtres restent allumées la nuit (activité continue :
 // bureaux/commerces/services) — les autres (résidentiel/hôtel/non défini)
 // gardent un allumage aléatoire, plus réaliste le soir.
 const GLASS_ALWAYS_LIT_USAGES = new Set(['bureaux','commerces','services']);
-const glassWindowTextures = new Map(); // cache : "hauteur|allLit|variante" -> CanvasTexture déjà générée
 let glassEmissiveMaterials = []; // clones "glass" actuellement dans la scène (pour bascule jour/nuit)
+
+// Géométrie des baies par usage (résidentiel/bureaux/services/non défini
+// partagent le même gabarit portrait ; l'hôtel a des baies plus larges et
+// plus espacées). Les commerces ont leur propre logique dédiée — voir
+// COMMERCE_* et buildGlassWindowGLSL() ci-dessous — donc pas d'entrée ici.
+// pitch = largeur d'une baie (m) ; winWFrac/winHFrac = fraction de la baie
+// (largeur/hauteur d'étage) occupée par le vitrage ; winBottomFrac = décalage
+// du bas du vitrage par rapport au bas de l'étage (fraction de hauteur d'étage).
+const NEWBLDG_WINDOW_PARAMS = {
+  residentiel: { pitch: 1.0,  winWFrac: 0.74, winHFrac: 0.48, winBottomFrac: 0.34 },
+  bureaux:     { pitch: 1.0,  winWFrac: 0.74, winHFrac: 0.48, winBottomFrac: 0.34 },
+  services:    { pitch: 1.0,  winWFrac: 0.74, winHFrac: 0.48, winBottomFrac: 0.34 },
+  nondefini:   { pitch: 1.0,  winWFrac: 0.74, winHFrac: 0.48, winBottomFrac: 0.34 },
+  hotel:       { pitch: 1.35, winWFrac: 0.78, winHFrac: 0.52, winBottomFrac: 0.30 } // plus larges et plus espacées
+};
+// Commerces : grandes baies vitrées PARTANT DU SOL (pas le gabarit centré
+// ci-dessus) — une baie sur 3 est plus basse, avec une enseigne lumineuse de
+// couleur variée au-dessus.
+const COMMERCE_BAY_WIDTH_M = 3;          // largeur d'une baie (m)
+const COMMERCE_SIGN_EVERY = 3;           // 1 baie sur 3 porte une enseigne
+const COMMERCE_SIGN_WINDOW_HEIGHT_M = 2; // hauteur de la baie basse, sous l'enseigne (m)
+const COMMERCE_WIN_MARGIN_SIDE_M = 0.15; // marge/meneau de chaque côté d'une baie (m)
+const COMMERCE_WIN_MARGIN_TOP_M = 0.12;  // marge en haut d'une baie pleine hauteur (m)
+const COMMERCE_SIGN_GAP_M = 0.10;        // espace entre le vitrage bas et l'enseigne (m)
+
+// Petite palette de teintes de verre "brillant" réalistes (bleu-gris,
+// bleu-vert, vert doux, bronze...) — une teinte est choisie par bâtiment/
+// tranche (seedStr) pour varier légèrement d'un immeuble à l'autre plutôt
+// qu'une seule couleur figée partout.
+const GLASS_TINTS = [
+  [0.55, 0.72, 0.80],
+  [0.50, 0.75, 0.78],
+  [0.62, 0.68, 0.62],
+  [0.70, 0.62, 0.48],
+  [0.58, 0.66, 0.75]
+];
+const GLASS_WALL_COLOR = [0.93, 0.91, 0.86]; // blanc cassé mat du reste de la façade
 
 // Hash simple et stable (pas de dépendance externe) pour dériver un numéro de
 // variante déterministe à partir de l'identifiant du bâtiment + de la tranche
@@ -1845,87 +1785,162 @@ function hashStringToInt(str){
   for(let i=0; i<str.length; i++){ h = (h*31 + str.charCodeAt(i)) | 0; }
   return Math.abs(h);
 }
-function createGlassWindowTexture(floorHeightM, allLit, variantSeed){
-  const colsPerBay = GLASS_PX_PER_METER;
-  const cols = colsPerBay * GLASS_BAYS_PER_TILE;
-  const rowsPerFloor = Math.round(floorHeightM * GLASS_PX_PER_METER);
-  const rows = rowsPerFloor * GLASS_FLOORS_PER_TILE;
-  const canvas = document.createElement('canvas');
-  canvas.width = cols; canvas.height = rows;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#000'; ctx.fillRect(0,0,cols,rows);
-  // Petit générateur pseudo-aléatoire à seed (mulberry32) pour que chaque
-  // variante soit reproductible plutôt que de dépendre de Math.random() global.
-  let seed = (variantSeed>>>0) || 1;
-  function rnd(){ seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed>>>15), 1 | seed); t = (t + Math.imul(t ^ (t>>>7), 61 | t)) ^ t; return ((t ^ (t>>>14)) >>> 0) / 4294967296; }
-  for(let f=0; f<GLASS_FLOORS_PER_TILE; f++){
-    // Étage technique : un plateau entier éteint de temps en temps (machinerie/CVC)
-    // — seulement pertinent en mode "toutes allumées" (bureaux/commerces/services),
-    // sinon l'aléatoire par baie ci-dessous fait déjà le travail.
-    const isTechFloor = allLit && rnd() < 0.05;
-    for(let bay=0; bay<GLASS_BAYS_PER_TILE; bay++){
-      if(isTechFloor) continue;
-      if(!allLit && rnd() > GLASS_WINDOW_LIT_PROB) continue; // indépendant par baie ET par étage
-      const warmth = 0.82 + rnd()*0.18; // blanc normal, juste une légère variation de luminosité
-      const v = Math.round(255*warmth);
-      ctx.fillStyle = `rgb(${v}, ${v}, ${v})`;
-      const x0 = bay*colsPerBay;
-      const padX = colsPerBay*0.13;
-      const padTop = rowsPerFloor*0.18, padBottom = rowsPerFloor*0.34;
-      const y0 = f*rowsPerFloor;
-      ctx.fillRect(x0+padX, y0+padTop, colsPerBay-2*padX, rowsPerFloor-padTop-padBottom);
+// Morceau de shader GLSL calculant, par fragment, si l'on est dans une baie
+// ("inWindow") et, pour les commerces, dans une enseigne ("inSign"). Les
+// variables cellId/cellUV (position dans la cellule baie×étage courante)
+// sont déjà calculées par l'appelant. `inWindow`/`inSign` sont déjà déclarées
+// (float) par l'appelant — ce morceau se contente de les affecter.
+function buildGlassWindowGLSL(usage){
+  if(usage === 'commerces'){
+    return `
+  {
+    float bayMod = mod(cellId.x, ${COMMERCE_SIGN_EVERY.toFixed(1)});
+    bool isSignBay = bayMod > ${(COMMERCE_SIGN_EVERY - 1).toFixed(1)} - 0.5;
+    float winWFrac = 1.0 - 2.0*(uMarginSideM/uPitch);
+    float xDist = abs(cellUV.x - 0.5) - winWFrac*0.5;
+    if(isSignBay){
+      float winHFrac = uSignWinHeightM/uFloorH;
+      float yDist = -min(cellUV.y, winHFrac - cellUV.y);
+      float edge = max(xDist, yDist);
+      float aa = max(fwidth(edge), 0.001);
+      inWindow = 1.0 - smoothstep(-aa, aa, edge);
+      float signBottomFrac = winHFrac + uSignGapM/uFloorH;
+      float signTopFrac = 1.0 - uMarginTopM/uFloorH;
+      float syDist = -min(cellUV.y - signBottomFrac, signTopFrac - cellUV.y);
+      float sedge = max(xDist, syDist);
+      float saa = max(fwidth(sedge), 0.001);
+      inSign = 1.0 - smoothstep(-saa, saa, sedge);
+    } else {
+      float winHFrac = 1.0 - uMarginTopM/uFloorH;
+      float yDist = -min(cellUV.y, winHFrac - cellUV.y);
+      float edge = max(xDist, yDist);
+      float aa = max(fwidth(edge), 0.001);
+      inWindow = 1.0 - smoothstep(-aa, aa, edge);
+      inSign = 0.0;
     }
   }
-  const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
-  if('SRGBColorSpace' in THREE) tex.colorSpace = THREE.SRGBColorSpace;
-  tex.repeat.set(1/(GLASS_BAY_WIDTH_M*GLASS_BAYS_PER_TILE), 1/(floorHeightM*GLASS_FLOORS_PER_TILE));
-  return tex;
-}
-function getGlassWindowTexture(floorHeightM, allLit, seedStr){
-  // Toutes les fenêtres allumées : pas besoin de variante, le motif est le même partout (plein).
-  const variant = allLit ? 0 : (hashStringToInt(seedStr || '') % GLASS_WINDOW_VARIANTS);
-  const key = `${floorHeightM.toFixed(2)}|${allLit?1:0}|${variant}`;
-  let tex = glassWindowTextures.get(key);
-  if(!tex){ tex = createGlassWindowTexture(floorHeightM, allLit, variant+1); glassWindowTextures.set(key, tex); }
-  return tex;
-}
-function applyGlassWindowTexture(mat, floorHeightM, usage, seedStr){
-  const allLit = GLASS_ALWAYS_LIT_USAGES.has(usage);
-  mat.emissiveMap = getGlassWindowTexture(floorHeightM, allLit, seedStr);
-  mat.emissive = new THREE.Color(0xffffff); // blanc normal, pas jaune
-  mat.emissiveIntensity = 0; // état par défaut (jour) ; basculé par applyGlassWindowEmissive()
-  return mat;
+`;
+  }
+  return `
+  {
+    float xDist = abs(cellUV.x - 0.5) - uWinWFrac*0.5;
+    float yDist = -min(cellUV.y - uWinBottomFrac, (uWinBottomFrac+uWinHFrac) - cellUV.y);
+    float edge = max(xDist, yDist);
+    float aa = max(fwidth(edge), 0.001);
+    inWindow = 1.0 - smoothstep(-aa, aa, edge);
+    inSign = 0.0;
+  }
+`;
 }
 function glassMaterialFor(editing, floorHeightM, usage, seedStr){
-  // Réutilise le VRAI matériau "glass" de la maquette (.glb) quand il est
-  // disponible, plutôt qu'un matériau générique recréé à la main — mêmes
-  // reflets/teinte que les vitrages déjà modélisés dans Blender. On clone
-  // pour pouvoir ajuster l'opacité en mode édition sans affecter les autres
-  // bâtiments (qui partagent sinon le même matériau de base).
-  let m;
-  if(glassMaterial){
-    m = glassMaterial.clone();
-    m.transparent = true;
-    m.opacity = editing ? 0.2 : (m.opacity || 0.85);
-  } else {
-    m = new THREE.MeshPhysicalMaterial({
-      color: 0xaecbe0,
-      metalness: 0.1,
-      roughness: 0.12,
-      transmission: 0.55,
-      thickness: 0.6,
-      ior: 1.4,
-      reflectivity: 0.5,
-      clearcoat: 0.3,
-      transparent: true,
-      opacity: editing ? 0.2 : 0.85
-    });
-  }
-  applyGlassWindowTexture(m, floorHeightM || 3, usage || DEFAULT_USAGE, seedStr);
+  usage = usage || DEFAULT_USAGE;
+  floorHeightM = floorHeightM || 3;
+  const isCommerce = usage === 'commerces';
+  const params = NEWBLDG_WINDOW_PARAMS[usage] || NEWBLDG_WINDOW_PARAMS.residentiel;
+  const pitch = isCommerce ? COMMERCE_BAY_WIDTH_M : params.pitch;
+  const tint = GLASS_TINTS[hashStringToInt(seedStr || '') % GLASS_TINTS.length];
+  const allLit = GLASS_ALWAYS_LIT_USAGES.has(usage);
+
+  // Matériau de base : blanc cassé mat — le shader ci-dessous réécrit
+  // couleur/rugosité/métallicité par fragment pour faire apparaître les
+  // baies (verre brillant coloré) par-dessus cette base.
+  const m = new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color(GLASS_WALL_COLOR[0], GLASS_WALL_COLOR[1], GLASS_WALL_COLOR[2]),
+    roughness: 0.88,
+    metalness: 0.0,
+    transparent: editing,
+    opacity: editing ? 0.2 : 1.0
+  });
+
+  const uniforms = {
+    uNightWin:      { value: (!editing && typeof isNight!=='undefined' && isNight) ? GLASS_WINDOW_EMISSIVE_INTENSITY : 0 },
+    uPitch:         { value: pitch },
+    uFloorH:        { value: floorHeightM },
+    uWinWFrac:      { value: params.winWFrac },
+    uWinHFrac:      { value: params.winHFrac },
+    uWinBottomFrac: { value: params.winBottomFrac },
+    uMarginSideM:   { value: COMMERCE_WIN_MARGIN_SIDE_M },
+    uMarginTopM:    { value: COMMERCE_WIN_MARGIN_TOP_M },
+    uSignWinHeightM:{ value: COMMERCE_SIGN_WINDOW_HEIGHT_M },
+    uSignGapM:      { value: COMMERCE_SIGN_GAP_M },
+    uLitProb:       { value: allLit ? 1.0 : GLASS_WINDOW_LIT_PROB },
+    uWallColor:     { value: new THREE.Color(GLASS_WALL_COLOR[0], GLASS_WALL_COLOR[1], GLASS_WALL_COLOR[2]) },
+    uGlassColor:    { value: new THREE.Color(tint[0], tint[1], tint[2]) },
+    uWarmthRange:   { value: allLit ? 0 : 0.35 },
+    uFloorBright:   { value: allLit ? 0.3 : 0.12 },
+    uFloorHue:      { value: allLit ? 0.5 : 0.2 },
+    uFloorCoolColor:{ value: new THREE.Color(0.75, 0.85, 1.0) },
+    uTechFloorProb: { value: allLit ? 0.05 : 0 }
+  };
+
   // En cours d'édition (aperçu quasi-transparent) on n'allume jamais les
   // fenêtres, même de nuit — ça n'a pas de sens sur un volume fantôme.
-  m.emissiveIntensity = (!editing && typeof isNight!=='undefined' && isNight) ? GLASS_WINDOW_EMISSIVE_INTENSITY : 0;
+  m.onBeforeCompile = (shader)=>{
+    Object.assign(shader.uniforms, uniforms);
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPosNW;\nvarying vec3 vNormalNW;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWorldPosNW = (modelMatrix * vec4(position,1.0)).xyz;\nvNormalNW = normalize(mat3(modelMatrix) * normal);');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+varying vec3 vWorldPosNW;
+varying vec3 vNormalNW;
+uniform float uNightWin, uPitch, uFloorH, uWinWFrac, uWinHFrac, uWinBottomFrac;
+uniform float uMarginSideM, uMarginTopM, uSignWinHeightM, uSignGapM;
+uniform float uLitProb, uWarmthRange, uFloorBright, uFloorHue, uTechFloorProb;
+uniform vec3 uWallColor, uGlassColor, uFloorCoolColor;
+float nwInWindow = 0.0;
+float nwInSign = 0.0;
+vec2 nwCellId = vec2(0.0);
+float hash12NW(vec2 p){
+  vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+  p3 += dot(p3, p3.yzx + 33.33);
+  return fract((p3.x + p3.y) * p3.z);
+}
+vec3 hue2rgbNW(float h){
+  return clamp(abs(mod(h*6.0+vec3(0.0,4.0,2.0), 6.0)-3.0)-1.0, 0.0, 1.0);
+}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+{
+  float alongWall = (abs(vNormalNW.x) > abs(vNormalNW.z)) ? vWorldPosNW.z : vWorldPosNW.x;
+  vec2 cellSize = vec2(uPitch, uFloorH);
+  vec2 cellCoord = vec2(alongWall, vWorldPosNW.y) / cellSize;
+  vec2 cellId = floor(cellCoord);
+  vec2 cellUV = fract(cellCoord);
+  float inWindow, inSign;
+${buildGlassWindowGLSL(usage)}
+  vec3 signColor = hue2rgbNW(hash12NW(cellId + 4.7));
+  vec3 dayColor = mix(uWallColor, uGlassColor, inWindow);
+  dayColor = mix(dayColor, signColor, inSign);
+  diffuseColor.rgb = dayColor;
+  nwInWindow = inWindow;
+  nwInSign = inSign;
+  nwCellId = cellId;
+}`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+roughnessFactor = mix(mix(0.88, 0.06, nwInWindow), 0.25, nwInSign);`)
+      .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
+metalnessFactor = mix(mix(0.0, 0.3, nwInWindow), 0.05, nwInSign);`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+{
+  float r = hash12NW(nwCellId);
+  float lit = step(r, uLitProb);
+  float warmth = 1.0 - uWarmthRange*0.5 + uWarmthRange*hash12NW(nwCellId + 17.0);
+  float floorId = floor(vWorldPosNW.y / uFloorH);
+  float floorBrightRnd = hash12NW(vec2(floorId, 91.7));
+  float floorHueRnd = hash12NW(vec2(floorId, 5.3));
+  float floorBrightness = 1.0 - uFloorBright*0.5 + uFloorBright*floorBrightRnd;
+  vec3 floorColor = mix(uGlassColor*1.4, uFloorCoolColor, floorHueRnd*uFloorHue);
+  float isTechFloor = step(hash12NW(vec2(floorId, 202.3)), uTechFloorProb);
+  lit *= (1.0 - isTechFloor);
+  vec3 signGlow = hue2rgbNW(hash12NW(nwCellId + 4.7));
+  totalEmissiveRadiance += floorColor * uNightWin * lit * warmth * floorBrightness * nwInWindow;
+  totalEmissiveRadiance += signGlow * uNightWin * nwInSign;
+}`);
+  };
+  m.userData.nightWindowUniforms = uniforms;
+  m.extensions = m.extensions || {};
+  m.extensions.derivatives = true; // requis par fwidth() dans le shader ci-dessus (WebGL1 ; sans effet en WebGL2)
+  m.needsUpdate = true;
   return m;
 }
 
@@ -10324,7 +10339,7 @@ function focusOn(b){
    le DOM existe, sans dépendre de l'ordre d'exécution du script.
    ============================================================ */
 function layoutFloatingPanels(){
-  const panels = ['sun-panel', 'admin-panel', 'legend-window', 'google-tiles-panel']
+  const panels = ['sun-panel', 'admin-panel', 'legend-window']
     .map(id=>document.getElementById(id))
     .filter(el=>el && el.classList.contains('show'));
   if(!panels.length) return;
@@ -11596,15 +11611,74 @@ function updateDetectorSpeedControl(r, dt, headPos){
 // milieu/arrière) pour le tram.
 const WAGON_GAP = 0.4; // mètres entre deux caisses consécutives
 
-/* ---- Modèles réels (vehicules.glb + trains.glb) ------------------------ */
+/* ---- Modèles réels (vehicules.glb + trains.glb + people.glb) ----------- */
 const VEHICLES_GLB_URL = './vehicules.glb';
 const TRAINS_GLB_URL = './trains.glb';
+const PEOPLE_GLB_URL = './people.glb';
 let vehicleTemplates = null; // {bus, voiture, tramAvant, tramMilieu, tramArriere, trainAvant, trainMilieu, trainArriere} -> THREE.Object3D
 const vehicleBodyMaterials = {}; // type -> THREE.Material de carrosserie (couleur modifiable en direct)
-// Matériau/geometry de secours pour piétons (aucun modèle piéton fourni) et
+// Gabarit piéton low poly animé (people.glb) : objet vide "people" parent de
+// body/head/arm_l/arm_r/leg_l/leg_r, avec 4 clips d'animation (balancement
+// bras/jambes) et 5 matériaux nommés skin/hair/tshirt/pant/shoes — recolorés
+// aléatoirement par instance (voir instantiatePedestrianFromTemplate).
+let peopleTemplate = null;   // THREE.Object3D "people" (racine du rig), null si people.glb absent/invalide
+let peopleAnimClips = [];    // THREE.AnimationClip[] extraits de people.glb
+// Matériau/geometry de secours pour piétons (si people.glb ne charge pas) et
 // pour les véhicules si jamais vehicules.glb ne charge pas.
 const pedestrianGeo = new THREE.CapsuleGeometry(0.22, 0.9, 4, 8);
 const pedestrianMat = new THREE.MeshStandardMaterial({ color:ROUTE_TYPES.pieton.color, roughness:0.8 });
+
+// ---- Palettes de couleurs des piétons (people.glb) ----------------------
+// Teintes de peau, du plus clair au plus foncé ; chacune porte sa propre
+// petite palette de couleurs de cheveux (poids relatifs) pour rester
+// logique (pas de blond platine sur une peau très foncée, etc.) tout en
+// gardant de la variété dans chaque groupe.
+const PEDESTRIAN_SKIN_TONES = [
+  { hex:0xffe0bd, hair:[[0x2c1b12,4],[0x4a2f1c,3],[0xd6b370,3],[0xb5651d,2],[0x9a9a9a,1]] },
+  { hex:0xf1c27d, hair:[[0x2c1b12,4],[0x4a2f1c,3],[0xd6b370,2],[0xb5651d,2],[0x9a9a9a,1]] },
+  { hex:0xe0ac69, hair:[[0x1a1108,4],[0x2c1b12,3],[0x4a2f1c,3],[0xb5651d,1]] },
+  { hex:0xc68642, hair:[[0x1a1108,5],[0x2c1b12,4],[0x4a2f1c,2]] },
+  { hex:0x8d5524, hair:[[0x0d0704,5],[0x1a1108,4],[0x2c1b12,2]] },
+  { hex:0x5a3825, hair:[[0x0d0704,6],[0x1a1108,3]] }
+];
+// Tirage pondéré générique : accepte soit des paires [valeur,poids], soit
+// des objets {hex,weight}.
+function pedestrianPickWeighted(list){
+  const val = (e)=> Array.isArray(e) ? e[0] : e.hex;
+  const wgt = (e)=> Array.isArray(e) ? e[1] : e.weight;
+  const total = list.reduce((s,e)=> s+wgt(e), 0);
+  let r = Math.random()*total;
+  for(const e of list){ r -= wgt(e); if(r<=0) return val(e); }
+  return val(list[list.length-1]);
+}
+function pickPedestrianSkinAndHair(){
+  const tone = PEDESTRIAN_SKIN_TONES[Math.floor(Math.random()*PEDESTRIAN_SKIN_TONES.length)];
+  return { skin: tone.hex, hair: pedestrianPickWeighted(tone.hair) };
+}
+// T-shirts : dominante noir/blanc, avec un large éventail de couleurs sobres
+// à vives en appoint (poids relatifs).
+const PEDESTRIAN_TSHIRT_COLORS = [
+  [0x111111,6],[0xf2f2f2,6],[0x2c3e50,3],[0x7a1f1f,2],[0x1f4d3a,2],[0x445566,2],
+  [0x8a6d3b,2],[0x555555,3],[0xb03050,1],[0x2060a0,2],[0x603080,1],[0xc9a227,1],
+  [0x334455,2],[0x704214,1]
+];
+// Pantalons : jean (majorité, plusieurs teintes, comme le rendu actuel) +
+// variantes sobres (noir, gris foncé, beige), et très rarement assorti au
+// t-shirt (effet "ensemble").
+const PEDESTRIAN_PANT_COLORS = [
+  [0x2c3e60,4],[0x35506e,4],[0x1c2b40,4],[0x4a6a8a,3],[0x223047,4],
+  [0x111111,3],[0x2b2b2b,2],[0xd8c9a3,2]
+];
+function pickPedestrianPant(tshirtHex){
+  if(Math.random() < 0.05) return tshirtHex; // "ensemble" rare : pantalon = couleur du t-shirt
+  return pedestrianPickWeighted(PEDESTRIAN_PANT_COLORS);
+}
+// Chaussures : sobre en large majorité (noir/blanc/gris), quelques touches
+// flashy occasionnelles (rouge, bleu ciel, jaune fluo, orange).
+const PEDESTRIAN_SHOES_COLORS = [
+  [0x111111,6],[0xf2f2f2,6],[0x8a8f94,2],
+  [0xd41111,1],[0x39c6f0,1],[0xe8ff33,1],[0xff7a00,1]
+];
 
 function findMaterialByName(root, name){
   if(!root) return null;
@@ -11696,7 +11770,9 @@ function applyTrainWindowEmissive(){
 // dédié, pas de clone par bâtiment).
 function applyGlassWindowEmissive(){
   const on = (typeof isNight!=='undefined' && isNight) || (window.isNight===true);
-  glassEmissiveMaterials.forEach(m=>{ m.emissiveIntensity = on ? GLASS_WINDOW_EMISSIVE_INTENSITY : 0; });
+  glassEmissiveMaterials.forEach(m=>{
+    if(m.userData && m.userData.nightWindowUniforms) m.userData.nightWindowUniforms.uNightWin.value = on ? GLASS_WINDOW_EMISSIVE_INTENSITY : 0;
+  });
 }
 function loadTrainsFromGLB(){
   return new Promise((resolve)=>{
@@ -11769,6 +11845,67 @@ function loadVehiclesFromGLB(){
     });
   });
 }
+function loadPeopleFromGLB(){
+  return new Promise((resolve)=>{
+    gltfLoader.load(PEOPLE_GLB_URL, (gltf)=>{
+      peopleTemplate = findByNameCI(gltf.scene, 'people');
+      peopleAnimClips = gltf.animations || [];
+      resolve();
+    }, undefined, ()=>{
+      // Fichier optionnel : on continue avec la capsule de secours (voir
+      // instantiateVehiclePart) si people.glb est absent ou invalide.
+      peopleTemplate = null;
+      resolve();
+    });
+  });
+}
+// Instancie un piéton à partir du gabarit people.glb : matériaux clonés PAR
+// INSTANCE (jamais partagés entre piétons — chacun doit pouvoir avoir sa
+// propre teinte de peau/cheveux/vêtements) et recolorés selon les palettes
+// ci-dessus. Un seul clone de matériau par catégorie et par piéton, même si
+// cette catégorie est utilisée sur plusieurs meshes (ex. "skin" sur les bras
+// ET la tête) — cohérence garantie sans multiplier les matériaux. Retourne
+// aussi le mixer d'animation (marche) prêt à jouer, déphasé aléatoirement
+// pour que les piétons d'une même voie ne marchent pas en cadence.
+function instantiatePedestrianFromTemplate(){
+  const obj = peopleTemplate.clone(true);
+  const matClones = {};   // uuid matériau d'origine -> clone (une fois par matériau réellement rencontré ici)
+  const byCategory = {};  // nom de matériau en minuscule ('skin'/'hair'/'tshirt'/'pant'/'shoes') -> clone
+  obj.traverse(o=>{
+    if(!o.isMesh) return;
+    o.castShadow = true; o.receiveShadow = true;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    const newMats = mats.map(mm=>{
+      if(!mm) return mm;
+      if(!matClones[mm.uuid]){
+        const clone = mm.clone();
+        matClones[mm.uuid] = clone;
+        const key = (clone.name||'').toLowerCase().trim();
+        if(key && !byCategory[key]) byCategory[key] = clone;
+      }
+      return matClones[mm.uuid];
+    });
+    o.material = Array.isArray(o.material) ? newMats : newMats[0];
+  });
+
+  const { skin, hair } = pickPedestrianSkinAndHair();
+  const tshirt = pedestrianPickWeighted(PEDESTRIAN_TSHIRT_COLORS);
+  const pant = pickPedestrianPant(tshirt);
+  const shoes = pedestrianPickWeighted(PEDESTRIAN_SHOES_COLORS);
+  if(byCategory.skin)   byCategory.skin.color.setHex(skin);
+  if(byCategory.hair)   byCategory.hair.color.setHex(hair);
+  if(byCategory.tshirt) byCategory.tshirt.color.setHex(tshirt);
+  if(byCategory.pant)   byCategory.pant.color.setHex(pant);
+  if(byCategory.shoes)  byCategory.shoes.color.setHex(shoes);
+
+  let mixer = null;
+  if(peopleAnimClips.length){
+    mixer = new THREE.AnimationMixer(obj);
+    peopleAnimClips.forEach(clip=> mixer.clipAction(clip).play());
+    mixer.update(Math.random()*1.25); // déphasage aléatoire de la démarche
+  }
+  return { object: obj, mixer };
+}
 function instantiateVehiclePart(cfg, wagonIndex){
   const key = cfg.parts ? cfg.parts[wagonIndex] : cfg.part;
   const template = key && vehicleTemplates ? vehicleTemplates[key] : null;
@@ -11801,15 +11938,26 @@ function instantiateVehiclePart(cfg, wagonIndex){
     }
     return obj;
   }
-  // Boîte de secours (piéton, ou modèle manquant) — dimensions approximatives.
-  const isPieton = cfg===ROUTE_TYPES.pieton;
-  const geo = isPieton ? pedestrianGeo : new THREE.BoxGeometry(...cfg.fallbackScale);
-  let mat = isPieton ? pedestrianMat : vehicleBodyMaterials[cfg._fallbackKey];
-  if(!isPieton && !mat){
+  // Piéton : vrai modèle low poly animé (people.glb) si chargé, avec
+  // matériaux/couleurs randomisés par instance ; sinon repli sur la capsule
+  // générique (people.glb absent ou invalide).
+  if(cfg===ROUTE_TYPES.pieton){
+    if(peopleTemplate){
+      const { object, mixer } = instantiatePedestrianFromTemplate();
+      object.userData.mixer = mixer; // récupéré par createRoute() pour piloter la marche
+      return object;
+    }
+    const mesh = new THREE.Mesh(pedestrianGeo, pedestrianMat);
+    mesh.castShadow = true;
+    return mesh;
+  }
+  // Boîte de secours (modèle véhicule manquant) — dimensions approximatives.
+  let mat = vehicleBodyMaterials[cfg._fallbackKey];
+  if(!mat){
     mat = new THREE.MeshStandardMaterial({color:cfg.color, roughness:0.7});
     vehicleBodyMaterials[cfg._fallbackKey] = mat;
   }
-  const mesh = new THREE.Mesh(geo, mat);
+  const mesh = new THREE.Mesh(new THREE.BoxGeometry(...cfg.fallbackScale), mat);
   mesh.castShadow = true;
   return mesh;
 }
@@ -11833,7 +11981,12 @@ function createRoute(points, type, name){
     for(let w=0;w<wagons;w++){
       const mesh = instantiateVehiclePart(cfg, w);
       vehicleGroup.add(mesh);
-      agents.push({ t: baseT, speed, wagonOffset: w*(cfg.length+WAGON_GAP), wagonIndex: w, mesh });
+      // Piéton animé (people.glb) : mixer posé sur userData par
+      // instantiateVehiclePart, cadencé sur la vitesse propre de l'agent
+      // pour que la foulée suive la démarche (marcheurs plus rapides/lents).
+      const mixer = (mesh.userData && mesh.userData.mixer) || null;
+      if(mixer) mixer.timeScale = speed / cfg.speed;
+      agents.push({ t: baseT, speed, wagonOffset: w*(cfg.length+WAGON_GAP), wagonIndex: w, mesh, mixer });
     }
   }
 
@@ -11892,6 +12045,7 @@ function tickAgents(dt){
         m.position.addScaledVector(side, lateral);
       }
       m.lookAt(m.position.clone().add(tangent));
+      if(a.mixer) a.mixer.update(dt); // avance le cycle de marche (bras/jambes) du piéton
     });
   }
 }
@@ -12918,211 +13072,6 @@ setupEyeToggle('eye-btn-labels',
   ()=> labelsVisible,
   (v)=>{ labelsVisible = v; labelGroup.visible = v; updateLabelPositions(); });
 
-/* ============================================================
-   FOND RÉEL "GOOGLE 3D" — tuiles 3D photoréalistes (Map Tiles API)
-   via 3d-tiles-renderer (NASA-AMMOS), alignées sur le repère local de la
-   maquette par coordonnées GPS (WGS84), pour visualiser les nouveaux
-   bâtiments / l'extension gare / les arbres / le sol+gazon du polygone
-   d'implantation dans leur contexte urbain réel.
-   ------------------------------------------------------------
-   Repère local de la maquette (voir SKYLINE_VIEW_DIRS plus haut) :
-   Nord = -Z, Sud = +Z, Est = +X, Ouest = -X, Haut = +Y — tout en mètres.
-   Le ReorientationPlugin de la librairie recale les tuiles Google pour
-   que le point GPS choisi tombe à l'origine (0,0,0), avec son Nord réel
-   aligné sur +Z et son Ouest réel sur +X (convention documentée du
-   plugin) — soit l'exact INVERSE de notre convention (Nord=-Z, Ouest=-X).
-   D'où la rotation de 180° sur Y appliquée ci-dessous en plus de ce que
-   fait le plugin : c'est elle qui aligne le Nord réel sur le Nord de la
-   maquette. Aucune mise à l'échelle nécessaire : les deux repères sont en
-   mètres.
-   ============================================================ */
-const GTP_STORAGE_KEY = 'placeDeMilan_googleTiles_v1';
-// Ancrage GPS par défaut, approximatif (secteur Lyon Part-Dieu) — à corriger
-// avec un point relevé précisément sur Google Maps (clic droit -> les deux
-// nombres affichés) correspondant exactement à l'origine (0,0,0) de la
-// maquette, puis à affiner à l'oeil avec les réglages fins du panneau.
-const GTP_DEFAULT = {
-  lat: 45.7614,
-  lon: 4.8558,
-  height: 220, // hauteur ELLIPSOÏDALE WGS84 (pas l'altitude usuelle "au-dessus du niveau de la mer", qui en diffère d'environ +45 à +50m dans la région lyonnaise) — approximative, à affiner visuellement
-  nudgeX: 0, nudgeY: 0, nudgeZ: 0, // réglage fin (mètres), appliqué APRÈS le calage GPS, sans recharger les tuiles
-  headingDeg: 0, // réglage fin de cap (degrés), en plus des 180° de correction Nord/Sud déjà appliqués automatiquement
-  apiKey: '',
-  enabled: false,
-};
-function gtpLoadConfig(){
-  let saved = null;
-  try{ saved = JSON.parse(localStorage.getItem(GTP_STORAGE_KEY) || 'null'); }catch(e){}
-  return Object.assign({}, GTP_DEFAULT, saved || {});
-}
-function gtpSaveConfig(){ try{ localStorage.setItem(GTP_STORAGE_KEY, JSON.stringify(gtpConfig)); }catch(e){} }
-let gtpConfig = gtpLoadConfig();
-
-// Groupe racine des tuiles Google, ajouté directement à `scene` — PAS à
-// worldRoot/siteRoot. Il ne doit jamais être vu par les traversées de
-// bounding-box / export du mode Skyline (collectSkylineMeshes ne parcourt
-// que siteRoot/globalRoot/buildings), du Mode Architecte, ni d'aucun autre
-// outil qui parcourt worldRoot — c'est ce qui garantit qu'ils restent
-// intacts, quel que soit l'état de ce calque.
-const googleTilesRoot = new THREE.Group();
-googleTilesRoot.name = 'GoogleTilesRoot';
-googleTilesRoot.visible = false;
-scene.add(googleTilesRoot);
-
-let googleTiles = null; // instance TilesRenderer active, ou null tant que désactivé/pas encore chargée
-let gtpLoadWatchdog = null;
-
-function gtpApplyNudgeAndHeading(){
-  googleTilesRoot.rotation.y = Math.PI + THREE.MathUtils.degToRad(gtpConfig.headingDeg);
-  googleTilesRoot.position.set(gtpConfig.nudgeX, gtpConfig.nudgeY, gtpConfig.nudgeZ);
-}
-
-function gtpSetStatus(msg, isError){
-  const el = document.getElementById('gtp-status');
-  if(!el) return;
-  el.textContent = msg || '';
-  el.style.color = isError ? '#ff8080' : '';
-}
-
-function gtpDisposeTiles(){
-  clearTimeout(gtpLoadWatchdog);
-  if(googleTiles){
-    googleTilesRoot.remove(googleTiles.group);
-    googleTiles.dispose();
-    googleTiles = null;
-  }
-}
-
-// (Re)crée le TilesRenderer avec la clé API et l'ancrage GPS courants.
-// Appelé au premier activation, et à chaque changement de clé API ou de
-// calage GPS (lat/lon/hauteur) — le ReorientationPlugin ne calcule son
-// transform qu'UNE SEULE FOIS au premier chargement du jeu de tuiles, donc
-// changer lat/lon après coup nécessite bien de repartir d'un TilesRenderer
-// neuf. Les réglages fins (nudge/cap), eux, s'appliquent sans reconstruction
-// — voir gtpApplyNudgeAndHeading().
-function gtpRebuildTiles(){
-  gtpDisposeTiles();
-  if(!gtpConfig.apiKey){
-    gtpSetStatus('Renseigne une clé API Google Cloud ci-dessus pour activer ce fond.', true);
-    return;
-  }
-  gtpSetStatus('Chargement des tuiles Google…');
-  const tiles = new TilesRenderer();
-  tiles.registerPlugin(new GoogleCloudAuthPlugin({ apiToken: gtpConfig.apiKey }));
-  tiles.registerPlugin(new ReorientationPlugin({
-    lat: THREE.MathUtils.degToRad(gtpConfig.lat),
-    lon: THREE.MathUtils.degToRad(gtpConfig.lon),
-    height: gtpConfig.height,
-    up: '+y',
-  }));
-  tiles.addEventListener('load-tile-set', ()=>{
-    clearTimeout(gtpLoadWatchdog);
-    gtpSetStatus('Tuiles Google chargées.');
-  });
-  // La librairie ne fournit pas d'évènement d'erreur dédié dans cette
-  // version : filet de sécurité simple qui pointe vers la console si rien
-  // n'a chargé après quelques secondes (clé invalide, API non activée,
-  // facturation absente, quota...).
-  gtpLoadWatchdog = setTimeout(()=>{
-    gtpSetStatus("Rien ne s'affiche après 8s — vérifie la console (F12) : clé API invalide, « Map Tiles API » ou facturation non activées côté Google Cloud sont les causes les plus fréquentes.", true);
-  }, 8000);
-  googleTilesRoot.add(tiles.group);
-  googleTiles = tiles;
-  gtpApplyNudgeAndHeading();
-}
-
-function gtpSetEnabled(on){
-  gtpConfig.enabled = on;
-  gtpSaveConfig();
-  if(on && !googleTiles) gtpRebuildTiles();
-}
-
-// Visible et mis à jour UNIQUEMENT en vue libre "Maquette 3D" normale : on
-// se cale sur les mêmes drapeaux que le reste de l'app plutôt que d'ajouter
-// des hooks dans chaque enter/exit*Mode() existant, pour ne prendre aucun
-// risque de régression sur Skyline / Architecte / Vue Globale / Vue plan /
-// Mode piéton / Construction — appelé à chaque frame depuis animate().
-function gtpUpdateFrame(){
-  const allowed = gtpConfig.enabled && !!googleTiles
-    && !skylineDirection
-    && !planViewActive
-    && !pedestrianModeActive
-    && !globalViewActive
-    && !document.body.classList.contains('architect-mode')
-    && !document.body.classList.contains('construction-mode');
-  googleTilesRoot.visible = allowed;
-  if(allowed){
-    googleTiles.setCamera(camera);
-    googleTiles.setResolutionFromRenderer(camera, renderer);
-    googleTiles.update();
-  }
-}
-
-/* ---- Câblage UI du panneau ---- */
-const btnGoogleTiles = document.getElementById('btn-google-tiles');
-const googleTilesPanel = document.getElementById('google-tiles-panel');
-const gtpApiKeyInput = document.getElementById('gtp-api-key');
-const gtpEnableChk = document.getElementById('gtp-enable');
-const gtpLatInput = document.getElementById('gtp-lat');
-const gtpLonInput = document.getElementById('gtp-lon');
-const gtpHeightInput = document.getElementById('gtp-height');
-
-function gtpRefreshUI(){
-  gtpApiKeyInput.value = gtpConfig.apiKey || '';
-  gtpEnableChk.checked = !!gtpConfig.enabled;
-  gtpLatInput.value = gtpConfig.lat;
-  gtpLonInput.value = gtpConfig.lon;
-  gtpHeightInput.value = gtpConfig.height;
-  btnGoogleTiles.classList.toggle('active', !!gtpConfig.enabled);
-}
-gtpRefreshUI();
-
-btnGoogleTiles.addEventListener('click', (ev)=>{
-  ev.stopPropagation();
-  googleTilesPanel.classList.toggle('show');
-  layoutFloatingPanels();
-});
-document.getElementById('google-tiles-panel-close').addEventListener('click', (ev)=>{
-  ev.stopPropagation();
-  googleTilesPanel.classList.remove('show');
-  layoutFloatingPanels();
-});
-gtpApiKeyInput.addEventListener('change', ()=>{
-  gtpConfig.apiKey = gtpApiKeyInput.value.trim();
-  gtpSaveConfig();
-  if(gtpConfig.enabled) gtpRebuildTiles();
-});
-gtpEnableChk.addEventListener('change', ()=>{
-  gtpSetEnabled(gtpEnableChk.checked);
-  btnGoogleTiles.classList.toggle('active', gtpConfig.enabled);
-});
-document.getElementById('gtp-apply-anchor').addEventListener('click', ()=>{
-  gtpConfig.lat = parseFloat(gtpLatInput.value) || GTP_DEFAULT.lat;
-  gtpConfig.lon = parseFloat(gtpLonInput.value) || GTP_DEFAULT.lon;
-  gtpConfig.height = parseFloat(gtpHeightInput.value) || 0;
-  gtpSaveConfig();
-  if(gtpConfig.enabled) gtpRebuildTiles();
-});
-document.querySelectorAll('[data-gtp-nudge]').forEach(btn=>{
-  btn.addEventListener('click', ()=>{
-    const [axis, deltaStr] = btn.dataset.gtpNudge.split(':');
-    const delta = parseFloat(deltaStr);
-    if(axis==='x') gtpConfig.nudgeX += delta;
-    else if(axis==='y') gtpConfig.nudgeY += delta;
-    else if(axis==='z') gtpConfig.nudgeZ += delta;
-    else if(axis==='rot') gtpConfig.headingDeg += delta;
-    gtpSaveConfig();
-    gtpApplyNudgeAndHeading();
-  });
-});
-document.getElementById('gtp-reset-nudge').addEventListener('click', ()=>{
-  gtpConfig.nudgeX = 0; gtpConfig.nudgeY = 0; gtpConfig.nudgeZ = 0; gtpConfig.headingDeg = 0;
-  gtpSaveConfig();
-  gtpApplyNudgeAndHeading();
-});
-
-if(gtpConfig.enabled) gtpRebuildTiles(); // reprend l'état choisi à la session précédente
-
 function animate(){
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
@@ -13152,16 +13101,17 @@ function animate(){
   }
   if(skylineDirection){ renderSkylineView(); drawSkylineRuler(); }
   else if(planViewActive){ syncOrthoCameraForPlanView(); updateScreenSizedMarkers(); renderer.render(scene, orthoCamera); }
-  else { gtpUpdateFrame(); updateScreenSizedMarkers(); renderer.render(scene, camera); }
+  else { updateScreenSizedMarkers(); renderer.render(scene, camera); }
 }
 animate();
 
-// Charge d'abord les modèles de véhicules (vehicules.glb) : toute création de
-// voie (démo ou routes.json) a besoin des gabarits chargés pour cloner de
-// vrais bus/trams/voitures au lieu de boîtes de secours. Le fichier est petit,
-// le délai est négligeable, et un échec de chargement ne bloque rien (repli
-// automatique sur les boîtes de secours, voir instantiateVehiclePart).
-Promise.all([loadVehiclesFromGLB(), loadTrainsFromGLB(), loadCraneFromGLB()]).then(()=>{
+// Charge d'abord les modèles de circulation (vehicules.glb, trains.glb,
+// people.glb) : toute création de voie (démo ou routes.json) a besoin des
+// gabarits chargés pour cloner de vrais bus/trams/voitures/piétons au lieu
+// de boîtes/capsule de secours. Les fichiers sont petits, le délai est
+// négligeable, et un échec de chargement ne bloque rien (repli automatique
+// sur les gabarits de secours, voir instantiateVehiclePart).
+Promise.all([loadVehiclesFromGLB(), loadTrainsFromGLB(), loadCraneFromGLB(), loadPeopleFromGLB()]).then(()=>{
   // Charge la vraie maquette si le fichier est présent à côté de index.html ;
   // sinon, bascule sur la maquette de démonstration procédurale (avec bâtiment
   // et voies d'exemple inclus dans buildDemoSite()) et affiche un diagnostic clair.
