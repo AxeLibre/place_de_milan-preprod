@@ -548,3 +548,17 @@ export function pointInBoxXZ(box, pos){
   if(!box || !pos) return false;
   return pos.x>=box.min.x && pos.x<=box.max.x && pos.z>=box.min.z && pos.z<=box.max.z;
 }
+export function dedupe(pts){
+  const uniq = [];
+  for(const p of pts){ if(!uniq.some(q=>Math.hypot(q.x-p.x,q.z-p.z)<0.01)) uniq.push(p); }
+  return uniq;
+}
+export function convexHullXZ(pts){
+  if(pts.length<3) return pts;
+  const s = pts.slice().sort((a,b)=> a.x-b.x || a.z-b.z);
+  const cross=(o,a,b)=>(a.x-o.x)*(b.z-o.z)-(a.z-o.z)*(b.x-o.x);
+  const lower=[]; for(const p of s){ while(lower.length>=2 && cross(lower[lower.length-2],lower[lower.length-1],p)<=0) lower.pop(); lower.push(p); }
+  const upper=[]; for(let i=s.length-1;i>=0;i--){ const p=s[i]; while(upper.length>=2 && cross(upper[upper.length-2],upper[upper.length-1],p)<=0) upper.pop(); upper.push(p); }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}

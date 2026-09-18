@@ -51,6 +51,12 @@ export function setSiteRoot(v){ siteRoot = v; }
 export function setBuildZone(v){ buildZone = v; }
 export function setBuildings(v){ buildings = v; }
 export function setIdCounter(v){ idCounter = v; }
+// Compteur d'identifiants partagé (bâtiments ET tranches "Extension Gare",
+// espaces de noms disjoints — les secondes sont préfixées "ext"). Un module
+// qui a besoin d'un nouvel id appelle nextId() plutôt que d'incrémenter
+// idCounter lui-même (un import ES est en lecture seule pour l'importeur).
+export function nextId(){ return idCounter++; }
+export function resetIdCounter(){ idCounter = 1; }
 export function setSelectedId(v){ selectedId = v; }
 
 export function setPlanViewActive(v){ planViewActive = v; }
