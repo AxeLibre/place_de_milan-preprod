@@ -2008,7 +2008,7 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facade
   // Clé de cache unique par motif+usage+tint pour FORCER Three.js à
   // recompiler le shader quand le motif change, au lieu de réutiliser un
   // programme en cache dont onBeforeCompile ne se relance pas.
-  m.customProgramCacheKey = usage + '|' + (motifId || DEFAULT_MOTIF) + '|' + (facadeTintHex || DEFAULT_FACADE_TINT) + '|' + (isGroundBand?1:0);
+  m.customProgramCacheKey = ()=> usage + '|' + (motifId || DEFAULT_MOTIF) + '|' + (facadeTintHex || DEFAULT_FACADE_TINT) + '|' + (isGroundBand?1:0);
 
   // En cours d'édition (aperçu quasi-transparent) on n'allume jamais les
   // fenêtres, même de nuit — ça n'a pas de sens sur un volume fantôme.
