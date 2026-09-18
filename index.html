@@ -1756,7 +1756,7 @@ const DEFAULT_FACADE_TINT = '#ede8db'; // teinte façade par défaut (blanc cass
 const DEFAULT_MOTIF = 'portrait';
 
 // Chaque motif est décrit en MÈTRES RÉELS (indépendant de la hauteur d'étage,
-// convertie en fraction de cellule au moment du rendu — voir motifTextureFor())
+// convertie en fraction de cellule au moment du rendu — voir motifParamsFor())
 // pour que "carré" donne un VRAI carré à l'écran quel que soit l'usage :
 //   - rect: fenêtre rectangulaire droite {w,h,sill} (largeur/hauteur/hauteur d'allège, en m)
 //   - parallelogram: comme rect, mais avec un décalage horizontal du haut par
@@ -1772,69 +1772,31 @@ const MOTIFS = {
   arche:            { label:'Baie en arche',         kind:'arch',           w:1.1, h:1.55, sill:0.7 },
   pleine_hauteur:   { label:'Baie pleine hauteur',   kind:'rect',           w:1.5, h:null, sill:0.15, topMargin:0.2 } // h calculé (sol→plafond)
 };
-// Petit cache de textures : une texture par (motif, hauteur d'étage arrondie)
-// suffit — la teinte de façade et la couleur du verre sont appliquées par le
-// shader (uWallColor/uGlassColor), pas cuites dans la texture, donc une même
-// texture de motif est réutilisable par tous les blocs qui le partagent.
-const motifTextureCache = new Map();
-function motifTextureFor(motifId, floorHeightM){
+// La forme du motif est désormais calculée DIRECTEMENT PAR FRAGMENT dans le
+// shader (voir buildGlassWindowGLSL), avec les mêmes formules "distance de
+// bord + smoothstep" déjà éprouvées pour les baies commerces plus bas — pas
+// de texture canvas intermédiaire. Une texture liée à un sampler2D partagé
+// entre plusieurs matériaux "glass" clonés s'est révélée peu fiable ici
+// (le motif ne changeait jamais visuellement à l'écran, quelle que soit la
+// texture réellement rebranchée) ; des uniforms float simples, recalculés à
+// chaque appel de glassMaterialFor(), lèvent toute ambiguïté.
+// motifParamsFor() convertit la définition d'un motif (mètres réels) en
+// fractions de cellule (largeur = fraction du pitch de 2 m, hauteurs =
+// fraction de la hauteur d'étage) — mêmes conventions que l'ancien gabarit
+// NEWBLDG_WINDOW_PARAMS et que la logique commerces ci-dessous.
+const MOTIF_KIND_INDEX = { rect:0, parallelogram:1, arch:2 };
+function motifParamsFor(motifId, floorHeightM){
   const def = MOTIFS[motifId] || MOTIFS[DEFAULT_MOTIF];
-  const key = motifId + '|' + floorHeightM.toFixed(2);
-  if(motifTextureCache.has(key)) return motifTextureCache.get(key);
-  const W = 128;
-  const H = Math.max(8, Math.round(W * (floorHeightM / MOTIF_PITCH_M)));
-  const canvas = document.createElement('canvas');
-  canvas.width = W; canvas.height = H;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
-  ctx.fillStyle = '#fff';
-  // Conversion mètres -> pixels : W px = MOTIF_PITCH_M m (horizontal), H px = floorHeightM m (vertical, 0 en bas).
-  const mx = m => (m / MOTIF_PITCH_M) * W;
-  const my = m => H - (m / floorHeightM) * H; // origine canvas en haut : on inverse Y (0m = bas de l'étage)
-  const w = def.w!=null ? mx(def.w) : null;
-  const h = def.h!=null ? (my(def.sill) - my(def.sill+def.h)) : (my(def.sill) - my(floorHeightM - (def.topMargin||0)));
-  const cx = W/2;
-  const yTop = my(def.sill) - h;
-  const yBot = my(def.sill);
-  if(def.kind === 'rect'){
-    ctx.fillRect(cx - w/2, yTop, w, h);
-  } else if(def.kind === 'parallelogram'){
-    const skewPx = mx(def.skew);
-    ctx.beginPath();
-    ctx.moveTo(cx - w/2, yBot);
-    ctx.lineTo(cx + w/2, yBot);
-    ctx.lineTo(cx + w/2 + skewPx, yTop);
-    ctx.lineTo(cx - w/2 + skewPx, yTop);
-    ctx.closePath();
-    ctx.fill();
-  } else if(def.kind === 'arch'){
-    const r = w/2;
-    const springY = yBot - h; // haut du corps rectangulaire = naissance de l'arc
-    ctx.beginPath();
-    ctx.moveTo(cx - r, yBot);
-    ctx.lineTo(cx - r, springY);
-    ctx.arc(cx, springY, r, Math.PI, 0, false);
-    ctx.lineTo(cx + r, yBot);
-    ctx.closePath();
-    ctx.fill();
-  }
-  const tex = new THREE.CanvasTexture(canvas);
-  // ClampToEdge + pas de mipmap : le motif est déjà "bouclé" dans le shader
-  // via fract(cellCoord) (voir buildGlassWindowGLSL), donc le wrapping GPU
-  // n'est pas nécessaire — et l'éviter garantit que la texture (dimensions non
-  // multiples de deux, puisque calées sur la vraie hauteur d'étage en mètres)
-  // s'affiche correctement sur toutes les configurations WebGL. Avec
-  // RepeatWrapping + mipmap sur une texture non multiple de deux, certains
-  // contextes la traitent comme incomplète et la lisent en noir uni — c'était
-  // le bug "changer le motif ne change rien" : plus aucune fenêtre nulle part.
-  tex.wrapS = THREE.ClampToEdgeWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
-  tex.magFilter = THREE.LinearFilter;
-  tex.minFilter = THREE.LinearFilter;
-  tex.generateMipmaps = false;
-  tex.needsUpdate = true;
-  motifTextureCache.set(key, tex);
-  return tex;
+  const hResolved = def.h!=null ? def.h : Math.max(0.2, floorHeightM - def.sill - (def.topMargin||0));
+  const archRadiusM = def.w/2; // rayon réel de l'arc (m) — seulement utilisé si kind==='arch'
+  return {
+    kind: MOTIF_KIND_INDEX[def.kind] != null ? MOTIF_KIND_INDEX[def.kind] : 0,
+    wFrac: def.w / MOTIF_PITCH_M,
+    hFrac: hResolved / floorHeightM,
+    sillFrac: def.sill / floorHeightM,
+    skewFrac: (def.skew||0) / MOTIF_PITCH_M,
+    archRyFrac: archRadiusM / floorHeightM
+  };
 }
 // Génère un aperçu SVG (façade + fenêtre) pour un motif — utilisé pour les
 // boutons de sélection dans la fiche bâtiment (mêmes formes que la texture
@@ -1937,33 +1899,64 @@ function buildGlassWindowGLSL(usage){
   }
 `;
   }
-  // Tous les autres usages : la forme de la fenêtre vient d'une texture
-  // "motif" (voir motifTextureFor()) répétée tous les MOTIF_PITCH_M mètres —
-  // système de façade personnalisable par bloc, plus de gabarit calculé en dur.
+  // Tous les autres usages : la forme de la fenêtre du motif choisi est
+  // calculée ICI, par fragment, avec les mêmes formules "distance de bord +
+  // smoothstep" que la logique commerces ci-dessus — trois formes possibles
+  // (uMotifKind), toutes en fractions de cellule (uMotifWFrac/HFrac/SillFrac/
+  // SkewFrac/ArchRyFrac, préparées par motifParamsFor() dans glassMaterialFor).
   return `
   {
-    inWindow = texture2D(uMotifTex, cellUV).r;
+    if(uMotifKind < 0.5){
+      // rect : rectangle droit, centré, de largeur/hauteur/allège données
+      float xDist = abs(cellUV.x - 0.5) - uMotifWFrac*0.5;
+      float yDist = -min(cellUV.y - uMotifSillFrac, (uMotifSillFrac+uMotifHFrac) - cellUV.y);
+      float edge = max(xDist, yDist);
+      float aa = max(fwidth(edge), 0.001);
+      inWindow = 1.0 - smoothstep(-aa, aa, edge);
+    } else if(uMotifKind < 1.5){
+      // parallelogram : même rectangle, mais dont le centre horizontal glisse
+      // linéairement du bas (0) au haut (uMotifSkewFrac) — fenêtre "inclinée"
+      float t = clamp((cellUV.y - uMotifSillFrac)/max(uMotifHFrac, 0.0001), 0.0, 1.0);
+      float cx = 0.5 + uMotifSkewFrac*t;
+      float xDist = abs(cellUV.x - cx) - uMotifWFrac*0.5;
+      float yDist = -min(cellUV.y - uMotifSillFrac, (uMotifSillFrac+uMotifHFrac) - cellUV.y);
+      float edge = max(xDist, yDist);
+      float aa = max(fwidth(edge), 0.001);
+      inWindow = 1.0 - smoothstep(-aa, aa, edge);
+    } else {
+      // arch : corps rectangulaire jusqu'à uMotifSillFrac+uMotifHFrac, puis
+      // demi-cercle au-dessus — rayon réel identique en x et en y (le rayon
+      // en mètres vaut uMotifWFrac*0.5 du pitch), mais la cellule n'étant pas
+      // carrée en mètres, on normalise x par le rayon-x (uMotifWFrac*0.5) et
+      // y par le rayon-y (uMotifArchRyFrac) pour obtenir un VRAI cercle.
+      float bodyBottom = uMotifSillFrac;
+      float bodyTop = uMotifSillFrac + uMotifHFrac;
+      float rX = max(uMotifWFrac*0.5, 0.0001);
+      float rY = max(uMotifArchRyFrac, 0.0001);
+      float edge;
+      if(cellUV.y <= bodyTop){
+        float xDist = abs(cellUV.x - 0.5) - rX;
+        float yDist = -min(cellUV.y - bodyBottom, bodyTop - cellUV.y);
+        edge = max(xDist, yDist);
+      } else {
+        vec2 p = vec2((cellUV.x - 0.5)/rX, (cellUV.y - bodyTop)/rY);
+        edge = (length(p) - 1.0) * rY;
+      }
+      float aa = max(fwidth(edge), 0.001);
+      inWindow = 1.0 - smoothstep(-aa, aa, edge);
+    }
     inSign = 0.0;
   }
 `;
-}
-// Texture 1x1 blanche de repli — utilisée pour le uniform uMotifTex quand il
-// n'est pas pertinent (commerces : ils n'utilisent pas le système de motifs,
-// mais le sampler doit tout de même recevoir une texture valide).
-let _fallbackWhiteTex = null;
-function fallbackWhiteTexture(){
-  if(_fallbackWhiteTex) return _fallbackWhiteTex;
-  const c = document.createElement('canvas'); c.width=c.height=1;
-  c.getContext('2d').fillRect(0,0,1,1);
-  _fallbackWhiteTex = new THREE.CanvasTexture(c);
-  return _fallbackWhiteTex;
 }
 function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facadeTintHex, isGroundBand){
   usage = usage || DEFAULT_USAGE;
   floorHeightM = floorHeightM || 3;
   const isCommerce = usage === 'commerces';
   const pitch = isCommerce ? COMMERCE_BAY_WIDTH_M : MOTIF_PITCH_M;
-  const motifTex = isCommerce ? fallbackWhiteTexture() : motifTextureFor(motifId || DEFAULT_MOTIF, floorHeightM);
+  // Toujours calculé (même pour les commerces, qui l'ignorent) pour que
+  // l'uniform ait systématiquement une valeur numérique valide.
+  const motifParams = motifParamsFor(motifId || DEFAULT_MOTIF, floorHeightM);
   const tint = GLASS_TINTS[hashStringToInt(seedStr || '') % GLASS_TINTS.length];
   const allLit = GLASS_ALWAYS_LIT_USAGES.has(usage);
   const wallColor = new THREE.Color(facadeTintHex || DEFAULT_FACADE_TINT);
@@ -1983,7 +1976,12 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facade
     uNightWin:      { value: (!editing && typeof isNight!=='undefined' && isNight) ? GLASS_WINDOW_EMISSIVE_INTENSITY : 0 },
     uPitch:         { value: pitch },
     uFloorH:        { value: floorHeightM },
-    uMotifTex:      { value: motifTex },
+    uMotifKind:       { value: motifParams.kind },
+    uMotifWFrac:      { value: motifParams.wFrac },
+    uMotifHFrac:      { value: motifParams.hFrac },
+    uMotifSillFrac:   { value: motifParams.sillFrac },
+    uMotifSkewFrac:   { value: motifParams.skewFrac },
+    uMotifArchRyFrac: { value: motifParams.archRyFrac },
     uMarginSideM:   { value: COMMERCE_WIN_MARGIN_SIDE_M },
     uMarginTopM:    { value: COMMERCE_WIN_MARGIN_TOP_M },
     uSignWinHeightM:{ value: COMMERCE_SIGN_WINDOW_HEIGHT_M },
@@ -2011,8 +2009,8 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facade
       .replace('#include <common>', `#include <common>
 varying vec3 vWorldPosNW;
 varying vec3 vNormalNW;
-uniform sampler2D uMotifTex;
 uniform float uNightWin, uPitch, uFloorH, uIsGroundBand;
+uniform float uMotifKind, uMotifWFrac, uMotifHFrac, uMotifSillFrac, uMotifSkewFrac, uMotifArchRyFrac;
 uniform float uMarginSideM, uMarginTopM, uSignWinHeightM, uSignGapM, uSignHeightM;
 uniform float uLitProb, uWarmthRange, uFloorBright, uFloorHue, uTechFloorProb;
 uniform vec3 uWallColor, uGlassColor, uFloorCoolColor;
