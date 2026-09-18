@@ -1738,29 +1738,132 @@ const GLASS_WINDOW_LIT_PROB = 0.38; // proportion de baies allumées la nuit (us
 const GLASS_ALWAYS_LIT_USAGES = new Set(['bureaux','commerces','services']);
 let glassEmissiveMaterials = []; // clones "glass" actuellement dans la scène (pour bascule jour/nuit)
 
-// Géométrie des baies par usage (résidentiel/bureaux/services/non défini
-// partagent le même gabarit portrait ; l'hôtel a des baies plus larges et
-// plus espacées). Les commerces ont leur propre logique dédiée — voir
-// COMMERCE_* et buildGlassWindowGLSL() ci-dessous — donc pas d'entrée ici.
-// pitch = largeur d'une baie (m) ; winWFrac/winHFrac = fraction de la baie
-// (largeur/hauteur d'étage) occupée par le vitrage ; winBottomFrac = décalage
-// du bas du vitrage par rapport au bas de l'étage (fraction de hauteur d'étage).
-const NEWBLDG_WINDOW_PARAMS = {
-  residentiel: { pitch: 1.0,  winWFrac: 0.74, winHFrac: 0.48, winBottomFrac: 0.34 },
-  bureaux:     { pitch: 1.0,  winWFrac: 0.74, winHFrac: 0.48, winBottomFrac: 0.34 },
-  services:    { pitch: 1.0,  winWFrac: 0.74, winHFrac: 0.48, winBottomFrac: 0.34 },
-  nondefini:   { pitch: 1.0,  winWFrac: 0.74, winHFrac: 0.48, winBottomFrac: 0.34 },
-  hotel:       { pitch: 1.35, winWFrac: 0.78, winHFrac: 0.52, winBottomFrac: 0.30 } // plus larges et plus espacées
+// ============================================================
+// FAÇADE PERSONNALISABLE PAR BLOC D'USAGE — motifs de fenêtre en "carreaux"
+// ============================================================
+// Chaque étage d'un bloc (résidentiel/bureaux/services/hôtel/non défini) est
+// désormais une répétition d'un MOTIF de MOTIF_PITCH_M de large, sur toute la
+// hauteur d'étage de ce bloc — au lieu d'un gabarit de baie calculé en dur par
+// usage. Le motif choisi (voir MOTIFS ci-dessous) définit la forme de la
+// fenêtre (carrée, rectangulaire portrait/paysage, inclinée, en arche, en
+// baie pleine hauteur...) ; la teinte de la façade autour est personnalisable
+// par bloc (band.facadeTint), la fenêtre elle-même restant un matériau
+// "verre" (band.facadeMotif ne pilote que sa FORME, pas sa couleur — voir
+// uGlassColor plus bas, inchangé). Les commerces gardent leur propre logique
+// de grandes baies + enseigne (COMMERCE_* et buildGlassWindowGLSL()).
+const MOTIF_PITCH_M = 2.0; // largeur d'un motif/carreau de façade (m) — répété le long du mur
+const DEFAULT_FACADE_TINT = '#ede8db'; // teinte façade par défaut (blanc cassé), personnalisable par bloc
+const DEFAULT_MOTIF = 'portrait';
+
+// Chaque motif est décrit en MÈTRES RÉELS (indépendant de la hauteur d'étage,
+// convertie en fraction de cellule au moment du rendu — voir motifTextureFor())
+// pour que "carré" donne un VRAI carré à l'écran quel que soit l'usage :
+//   - rect: fenêtre rectangulaire droite {w,h,sill} (largeur/hauteur/hauteur d'allège, en m)
+//   - parallelogram: comme rect, mais avec un décalage horizontal du haut par
+//     rapport au bas ({skew}, en m) — fenêtre "inclinée"
+//   - arch: fenêtre en arche : corps rectangulaire {w,h,sill} surmonté d'un
+//     demi-cercle de rayon w/2
+const MOTIFS = {
+  carre:            { label:'Carré',                kind:'rect',           w:1.2, h:1.2, sill:0.9 },
+  carre_incline:    { label:'Carré incliné',         kind:'parallelogram',  w:1.2, h:1.2, sill:0.9, skew:0.35 },
+  portrait:         { label:'Rectangle portrait',    kind:'rect',           w:0.9, h:2.0, sill:0.6 },
+  paysage:          { label:'Rectangle paysage',     kind:'rect',           w:1.6, h:0.9, sill:1.05 },
+  paysage_incline:  { label:'Paysage incliné',       kind:'parallelogram',  w:1.6, h:0.9, sill:1.05, skew:0.35 },
+  arche:            { label:'Baie en arche',         kind:'arch',           w:1.1, h:1.55, sill:0.7 },
+  pleine_hauteur:   { label:'Baie pleine hauteur',   kind:'rect',           w:1.5, h:null, sill:0.15, topMargin:0.2 } // h calculé (sol→plafond)
 };
-// Commerces : grandes baies vitrées PARTANT DU SOL (pas le gabarit centré
+// Petit cache de textures : une texture par (motif, hauteur d'étage arrondie)
+// suffit — la teinte de façade et la couleur du verre sont appliquées par le
+// shader (uWallColor/uGlassColor), pas cuites dans la texture, donc une même
+// texture de motif est réutilisable par tous les blocs qui le partagent.
+const motifTextureCache = new Map();
+function motifTextureFor(motifId, floorHeightM){
+  const def = MOTIFS[motifId] || MOTIFS[DEFAULT_MOTIF];
+  const key = motifId + '|' + floorHeightM.toFixed(2);
+  if(motifTextureCache.has(key)) return motifTextureCache.get(key);
+  const W = 128;
+  const H = Math.max(8, Math.round(W * (floorHeightM / MOTIF_PITCH_M)));
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#fff';
+  // Conversion mètres -> pixels : W px = MOTIF_PITCH_M m (horizontal), H px = floorHeightM m (vertical, 0 en bas).
+  const mx = m => (m / MOTIF_PITCH_M) * W;
+  const my = m => H - (m / floorHeightM) * H; // origine canvas en haut : on inverse Y (0m = bas de l'étage)
+  const w = def.w!=null ? mx(def.w) : null;
+  const h = def.h!=null ? (my(def.sill) - my(def.sill+def.h)) : (my(def.sill) - my(floorHeightM - (def.topMargin||0)));
+  const cx = W/2;
+  const yTop = my(def.sill) - h;
+  const yBot = my(def.sill);
+  if(def.kind === 'rect'){
+    ctx.fillRect(cx - w/2, yTop, w, h);
+  } else if(def.kind === 'parallelogram'){
+    const skewPx = mx(def.skew);
+    ctx.beginPath();
+    ctx.moveTo(cx - w/2, yBot);
+    ctx.lineTo(cx + w/2, yBot);
+    ctx.lineTo(cx + w/2 + skewPx, yTop);
+    ctx.lineTo(cx - w/2 + skewPx, yTop);
+    ctx.closePath();
+    ctx.fill();
+  } else if(def.kind === 'arch'){
+    const r = w/2;
+    const springY = yBot - h; // haut du corps rectangulaire = naissance de l'arc
+    ctx.beginPath();
+    ctx.moveTo(cx - r, yBot);
+    ctx.lineTo(cx - r, springY);
+    ctx.arc(cx, springY, r, Math.PI, 0, false);
+    ctx.lineTo(cx + r, yBot);
+    ctx.closePath();
+    ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  motifTextureCache.set(key, tex);
+  return tex;
+}
+// Génère un aperçu SVG (façade + fenêtre) pour un motif — utilisé pour les
+// boutons de sélection dans la fiche bâtiment (mêmes formes que la texture
+// rendue en 3D, sur une hauteur de référence de 3.2 m pour l'aperçu).
+function motifSvgPreview(motifId, facadeHex){
+  const def = MOTIFS[motifId] || MOTIFS[DEFAULT_MOTIF];
+  const refH = 3.2, VW = 60, VH = 60 * (refH / MOTIF_PITCH_M);
+  const mx = m => (m / MOTIF_PITCH_M) * VW;
+  const my = m => VH - (m / refH) * VH;
+  const w = def.w!=null ? mx(def.w) : null;
+  const h = def.h!=null ? (my(def.sill) - my(def.sill+def.h)) : (my(def.sill) - my(refH - (def.topMargin||0)));
+  const cx = VW/2, yTop = my(def.sill) - h, yBot = my(def.sill);
+  let shape = '';
+  if(def.kind === 'rect'){
+    shape = `<rect x="${(cx-w/2).toFixed(1)}" y="${yTop.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"/>`;
+  } else if(def.kind === 'parallelogram'){
+    const s = mx(def.skew);
+    shape = `<polygon points="${(cx-w/2).toFixed(1)},${yBot.toFixed(1)} ${(cx+w/2).toFixed(1)},${yBot.toFixed(1)} ${(cx+w/2+s).toFixed(1)},${yTop.toFixed(1)} ${(cx-w/2+s).toFixed(1)},${yTop.toFixed(1)}"/>`;
+  } else if(def.kind === 'arch'){
+    const r = w/2, springY = yBot - h;
+    shape = `<path d="M ${(cx-r).toFixed(1)} ${yBot.toFixed(1)} L ${(cx-r).toFixed(1)} ${springY.toFixed(1)} A ${r.toFixed(1)} ${r.toFixed(1)} 0 0 1 ${(cx+r).toFixed(1)} ${springY.toFixed(1)} L ${(cx+r).toFixed(1)} ${yBot.toFixed(1)} Z"/>`;
+  }
+  return `<svg viewBox="0 0 ${VW} ${VH.toFixed(1)}" xmlns="http://www.w3.org/2000/svg">`+
+    `<rect x="0" y="0" width="${VW}" height="${VH.toFixed(1)}" fill="${facadeHex}"/>`+
+    `<g fill="#7fa8c9" stroke="#0b1116" stroke-width="0.8">${shape}</g>`+
+  `</svg>`;
+}
+// Commerces : grandes baies vitrées PARTANT DU SOL (pas le système de motifs
 // ci-dessus) — une baie sur 3 est plus basse, avec une enseigne lumineuse de
-// couleur variée au-dessus.
+// couleur variée au-dessus, uniquement au rez-de-chaussée (voir glassMaterialFor).
 const COMMERCE_BAY_WIDTH_M = 3;          // largeur d'une baie (m)
 const COMMERCE_SIGN_EVERY = 3;           // 1 baie sur 3 porte une enseigne
 const COMMERCE_SIGN_WINDOW_HEIGHT_M = 2; // hauteur de la baie basse, sous l'enseigne (m)
 const COMMERCE_WIN_MARGIN_SIDE_M = 0.15; // marge/meneau de chaque côté d'une baie (m)
 const COMMERCE_WIN_MARGIN_TOP_M = 0.12;  // marge en haut d'une baie pleine hauteur (m)
 const COMMERCE_SIGN_GAP_M = 0.10;        // espace entre le vitrage bas et l'enseigne (m)
+const COMMERCE_SIGN_HEIGHT_M = 0.55;     // hauteur RÉELLE d'une enseigne (bandeau), pas toute la hauteur restante
 
 // Petite palette de teintes de verre "brillant" réalistes (bleu-gris,
 // bleu-vert, vert doux, bronze...) — une teinte est choisie par bâtiment/
@@ -1773,8 +1876,6 @@ const GLASS_TINTS = [
   [0.70, 0.62, 0.48],
   [0.58, 0.66, 0.75]
 ];
-const GLASS_WALL_COLOR = [0.93, 0.91, 0.86]; // blanc cassé mat du reste de la façade
-
 // Hash simple et stable (pas de dépendance externe) pour dériver un numéro de
 // variante déterministe à partir de l'identifiant du bâtiment + de la tranche
 // — deux rebuilds successifs du MÊME bâtiment gardent donc la même variante
@@ -1795,7 +1896,10 @@ function buildGlassWindowGLSL(usage){
     return `
   {
     float bayMod = mod(cellId.x, ${COMMERCE_SIGN_EVERY.toFixed(1)});
-    bool isSignBay = bayMod > ${(COMMERCE_SIGN_EVERY - 1).toFixed(1)} - 0.5;
+    // L'enseigne n'existe que sur le tout premier niveau (RDC) d'un bloc
+    // commerce qui commence bien au rez-de-chaussée du bâtiment (uIsGroundBand)
+    // — jamais sur un étage supérieur d'un bloc commerce plus haut.
+    bool isSignBay = (bayMod > ${(COMMERCE_SIGN_EVERY - 1).toFixed(1)} - 0.5) && uIsGroundBand > 0.5 && cellId.y < 0.5;
     float winWFrac = 1.0 - 2.0*(uMarginSideM/uPitch);
     float xDist = abs(cellUV.x - 0.5) - winWFrac*0.5;
     if(isSignBay){
@@ -1804,8 +1908,12 @@ function buildGlassWindowGLSL(usage){
       float edge = max(xDist, yDist);
       float aa = max(fwidth(edge), 0.001);
       inWindow = 1.0 - smoothstep(-aa, aa, edge);
+      // Enseigne = bandeau plat de hauteur RÉELLE fixe (uSignHeightM), pas
+      // toute la hauteur restante jusqu'au haut de l'étage — proportions
+      // réalistes d'une enseigne lumineuse de devanture plutôt qu'un pavé
+      // coloré occupant tout le linteau.
       float signBottomFrac = winHFrac + uSignGapM/uFloorH;
-      float signTopFrac = 1.0 - uMarginTopM/uFloorH;
+      float signTopFrac = min(signBottomFrac + uSignHeightM/uFloorH, 1.0 - uMarginTopM/uFloorH);
       float syDist = -min(cellUV.y - signBottomFrac, signTopFrac - cellUV.y);
       float sedge = max(xDist, syDist);
       float saa = max(fwidth(sedge), 0.001);
@@ -1821,31 +1929,42 @@ function buildGlassWindowGLSL(usage){
   }
 `;
   }
+  // Tous les autres usages : la forme de la fenêtre vient d'une texture
+  // "motif" (voir motifTextureFor()) répétée tous les MOTIF_PITCH_M mètres —
+  // système de façade personnalisable par bloc, plus de gabarit calculé en dur.
   return `
   {
-    float xDist = abs(cellUV.x - 0.5) - uWinWFrac*0.5;
-    float yDist = -min(cellUV.y - uWinBottomFrac, (uWinBottomFrac+uWinHFrac) - cellUV.y);
-    float edge = max(xDist, yDist);
-    float aa = max(fwidth(edge), 0.001);
-    inWindow = 1.0 - smoothstep(-aa, aa, edge);
+    inWindow = texture2D(uMotifTex, cellUV).r;
     inSign = 0.0;
   }
 `;
 }
-function glassMaterialFor(editing, floorHeightM, usage, seedStr){
+// Texture 1x1 blanche de repli — utilisée pour le uniform uMotifTex quand il
+// n'est pas pertinent (commerces : ils n'utilisent pas le système de motifs,
+// mais le sampler doit tout de même recevoir une texture valide).
+let _fallbackWhiteTex = null;
+function fallbackWhiteTexture(){
+  if(_fallbackWhiteTex) return _fallbackWhiteTex;
+  const c = document.createElement('canvas'); c.width=c.height=1;
+  c.getContext('2d').fillRect(0,0,1,1);
+  _fallbackWhiteTex = new THREE.CanvasTexture(c);
+  return _fallbackWhiteTex;
+}
+function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facadeTintHex, isGroundBand){
   usage = usage || DEFAULT_USAGE;
   floorHeightM = floorHeightM || 3;
   const isCommerce = usage === 'commerces';
-  const params = NEWBLDG_WINDOW_PARAMS[usage] || NEWBLDG_WINDOW_PARAMS.residentiel;
-  const pitch = isCommerce ? COMMERCE_BAY_WIDTH_M : params.pitch;
+  const pitch = isCommerce ? COMMERCE_BAY_WIDTH_M : MOTIF_PITCH_M;
+  const motifTex = isCommerce ? fallbackWhiteTexture() : motifTextureFor(motifId || DEFAULT_MOTIF, floorHeightM);
   const tint = GLASS_TINTS[hashStringToInt(seedStr || '') % GLASS_TINTS.length];
   const allLit = GLASS_ALWAYS_LIT_USAGES.has(usage);
+  const wallColor = new THREE.Color(facadeTintHex || DEFAULT_FACADE_TINT);
 
-  // Matériau de base : blanc cassé mat — le shader ci-dessous réécrit
-  // couleur/rugosité/métallicité par fragment pour faire apparaître les
-  // baies (verre brillant coloré) par-dessus cette base.
+  // Matériau de base : couleur de façade personnalisable — le shader
+  // ci-dessous réécrit couleur/rugosité/métallicité par fragment pour faire
+  // apparaître les baies (verre brillant coloré) par-dessus cette base.
   const m = new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color(GLASS_WALL_COLOR[0], GLASS_WALL_COLOR[1], GLASS_WALL_COLOR[2]),
+    color: wallColor,
     roughness: 0.88,
     metalness: 0.0,
     transparent: editing,
@@ -1856,15 +1975,15 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr){
     uNightWin:      { value: (!editing && typeof isNight!=='undefined' && isNight) ? GLASS_WINDOW_EMISSIVE_INTENSITY : 0 },
     uPitch:         { value: pitch },
     uFloorH:        { value: floorHeightM },
-    uWinWFrac:      { value: params.winWFrac },
-    uWinHFrac:      { value: params.winHFrac },
-    uWinBottomFrac: { value: params.winBottomFrac },
+    uMotifTex:      { value: motifTex },
     uMarginSideM:   { value: COMMERCE_WIN_MARGIN_SIDE_M },
     uMarginTopM:    { value: COMMERCE_WIN_MARGIN_TOP_M },
     uSignWinHeightM:{ value: COMMERCE_SIGN_WINDOW_HEIGHT_M },
     uSignGapM:      { value: COMMERCE_SIGN_GAP_M },
+    uSignHeightM:   { value: COMMERCE_SIGN_HEIGHT_M },
+    uIsGroundBand:  { value: isGroundBand ? 1.0 : 0.0 },
     uLitProb:       { value: allLit ? 1.0 : GLASS_WINDOW_LIT_PROB },
-    uWallColor:     { value: new THREE.Color(GLASS_WALL_COLOR[0], GLASS_WALL_COLOR[1], GLASS_WALL_COLOR[2]) },
+    uWallColor:     { value: wallColor },
     uGlassColor:    { value: new THREE.Color(tint[0], tint[1], tint[2]) },
     uWarmthRange:   { value: allLit ? 0 : 0.35 },
     uFloorBright:   { value: allLit ? 0.3 : 0.12 },
@@ -1884,8 +2003,9 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr){
       .replace('#include <common>', `#include <common>
 varying vec3 vWorldPosNW;
 varying vec3 vNormalNW;
-uniform float uNightWin, uPitch, uFloorH, uWinWFrac, uWinHFrac, uWinBottomFrac;
-uniform float uMarginSideM, uMarginTopM, uSignWinHeightM, uSignGapM;
+uniform sampler2D uMotifTex;
+uniform float uNightWin, uPitch, uFloorH, uIsGroundBand;
+uniform float uMarginSideM, uMarginTopM, uSignWinHeightM, uSignGapM, uSignHeightM;
 uniform float uLitProb, uWarmthRange, uFloorBright, uFloorHue, uTechFloorProb;
 uniform vec3 uWallColor, uGlassColor, uFloorCoolColor;
 float nwInWindow = 0.0;
@@ -6663,7 +6783,7 @@ function addVolumeToBuilding(b, pts, floors){
   // Nouvelle tranche au sommet, avec SON PROPRE contour (le décroché) — un
   // seul et même compteur d'étages pour tout le bâtiment, donc surface et
   // répartition des usages restent automatiquement exactes.
-  b.bands.push({ from:newFrom, to:b.floors, usage: belowBand.usage || DEFAULT_USAGE, points: cleaned });
+  b.bands.push({ from:newFrom, to:b.floors, usage: belowBand.usage || DEFAULT_USAGE, points: cleaned, facadeMotif: belowBand.facadeMotif || DEFAULT_MOTIF, facadeTint: belowBand.facadeTint || DEFAULT_FACADE_TINT });
   normalizeBands(b);
   rebuildMesh(b);
   renderList();
@@ -7633,7 +7753,7 @@ updateBrushRowState();
 // Infinity), pas une limite qu'on s'attend à approcher en usage normal.
 const MAX_BUILDING_FLOORS = 120;
 function defaultBands(floors){
-  return [{from:1, to:floors, usage:DEFAULT_USAGE}];
+  return [{from:1, to:floors, usage:DEFAULT_USAGE, facadeMotif:DEFAULT_MOTIF, facadeTint:DEFAULT_FACADE_TINT}];
 }
 
 // ============================================================
@@ -7663,11 +7783,15 @@ function normalizeBands(b){
     // `points` (contour propre à cette tranche, pour un décroché) est
     // conservé tel quel s'il existe — sinon `undefined`/`null`, ce qui veut
     // dire "même emprise que le socle" (voir footprintForBand()).
-    out.push({ from, to, usage: band.usage || DEFAULT_USAGE, points: band.points || null });
+    out.push({
+      from, to, usage: band.usage || DEFAULT_USAGE, points: band.points || null,
+      facadeMotif: band.facadeMotif || DEFAULT_MOTIF,
+      facadeTint: band.facadeTint || DEFAULT_FACADE_TINT
+    });
     from = to+1;
   }
   if(!out.length){
-    out.push({from:1, to:b.floors, usage:DEFAULT_USAGE, points:null});
+    out.push({from:1, to:b.floors, usage:DEFAULT_USAGE, points:null, facadeMotif:DEFAULT_MOTIF, facadeTint:DEFAULT_FACADE_TINT});
   } else if(out[out.length-1].to < b.floors){
     // Le nombre d'étages a augmenté (ou une tranche manquait) : la tranche
     // du haut absorbe automatiquement les nouveaux étages — jamais de
@@ -7983,7 +8107,7 @@ function rebuildMesh(b){
       for(let f=band.from; f<=band.to; f++) bandHeight += floorHeightFor(usageAtFloor(b,f));
       const geo = new THREE.ExtrudeGeometry(shape, { depth: bandHeight, bevelEnabled:false, curveSegments:1 });
       geo.rotateX(-Math.PI/2);
-      const mat = glassMaterialFor(editing, floorHeightFor(band.usage || DEFAULT_USAGE), band.usage || DEFAULT_USAGE, b.id + ':' + idx);
+      const mat = glassMaterialFor(editing, floorHeightFor(band.usage || DEFAULT_USAGE), band.usage || DEFAULT_USAGE, b.id + ':' + idx, band.facadeMotif, band.facadeTint, band.from === 1);
       b._glassMats.push(mat);
       glassEmissiveMaterials.push(mat);
       const mesh = new THREE.Mesh(geo, mat);
@@ -10204,6 +10328,7 @@ function renderBldgEditWindow(b){
 function buildBandEditor(b, idx){
   const band = b.bands[idx];
   const isSetback = !!(band.points && band.points.length>=3);
+  const isCommerceBand = band.usage === 'commerces';
   const isLast = idx === b.bands.length-1;
   const wrap = document.createElement('div');
   wrap.className = 'bew-band-editor';
@@ -10234,6 +10359,50 @@ function buildBandEditor(b, idx){
   usageRow.appendChild(sel);
   wrap.appendChild(usageRow);
 
+  // ---------- Façade personnalisable : forme du motif de fenêtre (sauf
+  // commerces, qui gardent leurs grandes baies dédiées) + teinte de façade
+  // (toujours réglable, quel que soit l'usage). ----------
+  if(!isCommerceBand){
+    const motifTitle = document.createElement('div');
+    motifTitle.style.cssText = 'color:var(--muted);flex-shrink:0;font-size:11px;margin-top:4px;';
+    motifTitle.textContent = 'Motif de fenêtre (répété tous les 2 m)';
+    wrap.appendChild(motifTitle);
+    const motifRow = document.createElement('div');
+    motifRow.style.cssText = 'display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 2px;';
+    Object.keys(MOTIFS).forEach(mid=>{
+      const isSelected = (band.facadeMotif || DEFAULT_MOTIF) === mid;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.title = MOTIFS[mid].label;
+      btn.style.cssText = `width:34px;height:34px;padding:2px;border-radius:6px;overflow:hidden;cursor:pointer;background:#101820;border:2px solid ${isSelected?'var(--accent)':'#2a3946'};`;
+      btn.innerHTML = motifSvgPreview(mid, band.facadeTint || DEFAULT_FACADE_TINT);
+      const svgEl = btn.querySelector('svg');
+      if(svgEl) svgEl.style.cssText = 'width:100%;height:100%;display:block;';
+      btn.addEventListener('click', ()=>{
+        band.facadeMotif = mid;
+        rebuildMesh(b); renderBldgEditWindow(b);
+      });
+      motifRow.appendChild(btn);
+    });
+    wrap.appendChild(motifRow);
+  }
+  const tintRow = document.createElement('div');
+  tintRow.className = 'bew-band-editor-row';
+  tintRow.style.marginBottom = '4px';
+  const tintLabel = document.createElement('span');
+  tintLabel.className = 'x';
+  tintLabel.textContent = 'Teinte de la façade';
+  const tintInp = document.createElement('input');
+  tintInp.type = 'color';
+  tintInp.value = band.facadeTint || DEFAULT_FACADE_TINT;
+  tintInp.style.cssText = 'width:34px;height:26px;padding:0;border:1px solid #2a3946;border-radius:5px;background:none;cursor:pointer;flex-shrink:0;';
+  tintInp.addEventListener('input', ()=>{
+    band.facadeTint = tintInp.value;
+    rebuildMesh(b); renderBldgEditWindow(b);
+  });
+  tintRow.append(tintLabel, tintInp);
+  wrap.appendChild(tintRow);
+
   const rangeRow = document.createElement('div');
   rangeRow.className = 'bew-band-editor-row';
   const fromLabel = document.createElement('span');
@@ -10241,7 +10410,7 @@ function buildBandEditor(b, idx){
   fromLabel.textContent = 'De R+'+(band.from-1);
   const x = document.createElement('span'); x.className='x'; x.textContent="jusqu'à R+";
   const toInp = document.createElement('input');
-  toInp.type='number'; toInp.min=band.from; toInp.max=b.floors; toInp.value=band.to-1;
+  toInp.type='number'; toInp.min=band.from-1; toInp.max=b.floors; toInp.value=band.to-1;
   toInp.title = "Jusqu'à quel étage va ce bloc — les blocs au-dessus se recalent automatiquement";
   if(isLast) toInp.disabled = true;
   toInp.addEventListener('change', ()=>{
@@ -10283,7 +10452,7 @@ function buildBandEditor(b, idx){
     // que le bouton "Forme" apparaisse aussitôt et permette de le redessiner
     // librement, sans jamais faire réapparaître un plein-socle implicite.
     const inheritedFootprint = footprintForBand(b, band).map(p=>({x:p.x, z:p.z}));
-    const newBand = { from: splitAt+1, to: band.to, usage: band.usage, points: inheritedFootprint };
+    const newBand = { from: splitAt+1, to: band.to, usage: band.usage, points: inheritedFootprint, facadeMotif: band.facadeMotif || DEFAULT_MOTIF, facadeTint: band.facadeTint || DEFAULT_FACADE_TINT };
     band.to = splitAt;
     b.bands.splice(idx+1, 0, newBand);
     normalizeBands(b);
