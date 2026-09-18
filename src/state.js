@@ -35,6 +35,12 @@ export let hallMesh = null;
 export let extensionGareMesh = null;
 export let hallFacadeWorldNormal = null;
 
+export let treesGroup = null;
+export let quartierGroup = null;
+export let sun = null;
+export let hemiLight = null;
+export let labels = [];
+
 export let drawing = false;
 export let drawMenuOpen = false;
 export let treePlacing = false;
@@ -67,6 +73,12 @@ export function setEditingBuildingId(v){ editingBuildingId = v; }
 export function setHallMesh(v){ hallMesh = v; }
 export function setExtensionGareMesh(v){ extensionGareMesh = v; }
 export function setHallFacadeWorldNormal(v){ hallFacadeWorldNormal = v; }
+
+export function setTreesGroup(v){ treesGroup = v; }
+export function setQuartierGroup(v){ quartierGroup = v; }
+export function setSun(v){ sun = v; }
+export function setHemiLight(v){ hemiLight = v; }
+export function setLabels(v){ labels = v; }
 
 export function setDrawing(v){ drawing = v; }
 export function setDrawMenuOpen(v){ drawMenuOpen = v; }
