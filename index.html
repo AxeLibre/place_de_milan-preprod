@@ -2007,10 +2007,14 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facade
     uTechFloorProb: { value: allLit ? 0.05 : 0 }
   };
 
-  // Clé de cache unique par motif+usage+tint pour FORCER Three.js à
-  // recompiler le shader quand le motif change, au lieu de réutiliser un
-  // programme en cache dont onBeforeCompile ne se relance pas.
-  m.customProgramCacheKey = ()=> usage + '|' + (motifId || DEFAULT_MOTIF) + '|' + (facadeTintHex || DEFAULT_FACADE_TINT) + '|' + (isGroundBand?1:0);
+  // Clé de cache unique par motif+usage pour FORCER Three.js à recompiler
+  // le shader quand le motif change, au lieu de réutiliser un programme en
+  // cache dont onBeforeCompile ne se relance pas. La teinte de façade n'est
+  // PAS incluse : elle n'affecte que l'uniform uWallColor (aucune branche
+  // GLSL ne dépend de sa valeur), donc l'inclure ici forçait un nouveau
+  // programme shader compilé à chaque changement de couleur — c'était la
+  // principale source de ralentissement liée aux façades personnalisées.
+  m.customProgramCacheKey = ()=> usage + '|' + (motifId || DEFAULT_MOTIF) + '|' + (isGroundBand?1:0);
 
   // En cours d'édition (aperçu quasi-transparent) on n'allume jamais les
   // fenêtres, même de nuit — ça n'a pas de sens sur un volume fantôme.
@@ -10727,9 +10731,36 @@ function collectSiteLights(){
       o.decay = 1.1;
       o.distance = (o.distance && o.distance>0) ? Math.min(o.distance, 150) : 110;
     }
+    // Sécurité explicite : une ombre dynamique par lampadaire (et il peut y
+    // en avoir des dizaines allumées en mode Nuit) serait rédhibitoire en
+    // perf pour un gain visuel quasi nul à cette échelle. Le .glb ne devrait
+    // pas en exporter, mais on ne compte pas sur ce défaut.
+    o.castShadow = false;
     siteLights.push(o);
   });
   siteLights.forEach(l=> l.visible = isNight);
+}
+// Au-delà de ce nombre de lampadaires/spots réellement actifs en même temps,
+// chaque fragment éclairé de la scène doit évaluer la contribution de chaque
+// lumière en plus de forcer une recompilation de tous les shaders PBR quand
+// le total change — c'est la principale cause de lourdeur du mode Nuit. On
+// ne garde donc allumées que les MAX_ACTIVE_SITE_LIGHTS lampes les plus
+// proches de la caméra, recalculé quelques fois par seconde (pas à chaque
+// frame, inutile pour un simple culling de visibilité) plutôt qu'une seule
+// fois à l'entrée en mode Nuit.
+const MAX_ACTIVE_SITE_LIGHTS = 18;
+const SITE_LIGHTS_CULL_INTERVAL = 0.15;
+let siteLightsCullAccum = 0;
+const _siteLightWorldPosTmp = new THREE.Vector3();
+function updateActiveSiteLights(dt){
+  if(!isNight || siteLights.length <= MAX_ACTIVE_SITE_LIGHTS) return;
+  siteLightsCullAccum += dt;
+  if(siteLightsCullAccum < SITE_LIGHTS_CULL_INTERVAL) return;
+  siteLightsCullAccum = 0;
+  const camPos = camera.position;
+  const distSq = siteLights.map(l=> l.getWorldPosition(_siteLightWorldPosTmp).distanceToSquared(camPos));
+  const order = siteLights.map((_,i)=>i).sort((a,b)=> distSq[a]-distSq[b]);
+  order.forEach((idx, rank)=>{ siteLights[idx].visible = rank < MAX_ACTIVE_SITE_LIGHTS; });
 }
 /* ============================================================
    ÉCLAIRAGE — position solaire réelle (latitude de Lyon, 45.75° N), pour
@@ -10915,6 +10946,11 @@ function applyNight(){
   applyGlassWindowEmissive();
   applyStaticWindowEmissive();
   refreshSunPanelUI();
+  // Recalcule immédiatement le sous-ensemble de lampadaires actifs (sinon on
+  // attendrait jusqu'à SITE_LIGHTS_CULL_INTERVAL avec TOUTES les lampes
+  // allumées par ensureNightVisualEnvironment ci-dessus, ce qui provoque le
+  // pic de recompilation shader qu'on cherche justement à éviter).
+  updateActiveSiteLights(SITE_LIGHTS_CULL_INTERVAL);
 }
 /* ------------------------------------------------------------
    CURSEUR D'HEURE — zones du curseur (en % de la piste 0..100) :
@@ -12092,7 +12128,12 @@ function instantiatePedestrianFromTemplate(){
   const byCategory = {};  // nom de matériau en minuscule ('skin'/'hair'/'tshirt'/'pant'/'shoes') -> clone
   obj.traverse(o=>{
     if(!o.isMesh) return;
-    o.castShadow = true; o.receiveShadow = true;
+    // castShadow=false : à l'échelle de la maquette, l'ombre portée d'un
+    // piéton individuel est imperceptible, mais avec des dizaines de piétons
+    // simultanés le coût du shadow pass (PCFSoftShadowMap) pour ces ombres-là
+    // n'est pas négligeable. receiveShadow reste actif (ils restent cohérents
+    // sous les ombres des bâtiments/arbres).
+    o.castShadow = false; o.receiveShadow = true;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
     const newMats = mats.map(mm=>{
       if(!mm) return mm;
@@ -12167,7 +12208,7 @@ function instantiateVehiclePart(cfg, wagonIndex){
       return object;
     }
     const mesh = new THREE.Mesh(pedestrianGeo, pedestrianMat);
-    mesh.castShadow = true;
+    mesh.castShadow = false; // cohérent avec instantiatePedestrianFromTemplate() ci-dessus
     return mesh;
   }
   // Boîte de secours (modèle véhicule manquant) — dimensions approximatives.
@@ -12234,6 +12275,12 @@ function createRoute(points, type, name){
 // on met simplement à jour sa position/orientation à chaque frame, plus
 // besoin de gérer des InstancedMesh de phares séparés puisque les phares
 // sont déjà modélisés dans vehicules.glb (voir applyVehicleLightState).
+// Au-delà de cette distance à la caméra, on ne met plus à jour le mixer
+// d'animation des piétons (bras/jambes) : le personnage reste visible et se
+// déplace sur sa route, mais le cycle de marche est figé — invisible à
+// l'œil à cette distance, et ça évite de faire tourner des dizaines de
+// squelettes (skinning) hors champ ou trop petits pour être perçus.
+const PIETON_ANIM_CULL_DIST_SQ = 120*120;
 function tickAgents(dt){
   for(const r of routes){
     const len = r.curve.getLength();
@@ -12264,7 +12311,12 @@ function tickAgents(dt){
         m.position.addScaledVector(side, lateral);
       }
       m.lookAt(m.position.clone().add(tangent));
-      if(a.mixer) a.mixer.update(dt); // avance le cycle de marche (bras/jambes) du piéton
+      // Culling par distance : pour les piétons trop loin de la caméra, on
+      // saute la mise à jour du mixer (coûteuse : skinning du squelette)
+      // sans arrêter le déplacement du personnage sur sa route.
+      if(a.mixer && (r.type!=='pieton' || m.position.distanceToSquared(camera.position) < PIETON_ANIM_CULL_DIST_SQ)){
+        a.mixer.update(dt); // avance le cycle de marche (bras/jambes) du piéton
+      }
     });
   }
 }
@@ -13299,6 +13351,7 @@ function animate(){
   else if(globalViewActive){ updateGlobalViewFog(); updateGlobalViewKeyboardPan(dt); controls.update(); }
   else { updateOrbitKeyboardNav(dt); controls.update(); }
   if(!simulationPaused) tickAgents(dt);
+  updateActiveSiteLights(dt);
   updateDemolitions(dt);
   // La construction animée (étages qui "poussent" + grue de chantier) est un
   // type d'animation de la simulation au même titre que les véhicules/piétons
