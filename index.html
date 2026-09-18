@@ -401,6 +401,7 @@ import {
   polygonOutsideAreaRatio, shrinkPolygonToFitOverlap, revertBandOverflowIfNeeded, rotatePointAround,
   repairBuildingPoints, pointInBoxXZ
 } from './src/geometry-utils.js';
+import * as AppState from './src/state.js';
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -996,14 +997,17 @@ if(new URLSearchParams(location.search).get('admin')==='1'){
 const viewport = document.getElementById('viewport');
 const statusLine = document.getElementById('status-line');
 const scene = new THREE.Scene();
+AppState.setScene(scene);
 let bldgHoverMaterial = null; // assigné plus bas (voir survol bâtiment) ; déclaré ici tôt car resize() y fait référence dès le chargement
 scene.background = new THREE.Color(0x101820);
 scene.fog = new THREE.Fog(0x101820, 420, 950); // brouillard allégé : commence plus loin pour rester lisible dézoomé, tout en restant présent en fond
 
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 3000);
+AppState.setCamera(camera);
 camera.position.set(140, 130, 170);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, logarithmicDepthBuffer: true });
+AppState.setRenderer(renderer);
 renderer.localClippingEnabled = true; // requis pour la disparition "haut vers bas" de la grue de chantier
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
@@ -1046,6 +1050,7 @@ window.addEventListener('resize', ()=>{
 });
 
 const controls = new OrbitControls(camera, renderer.domElement);
+AppState.setControls(controls);
 controls.target.set(0,8,0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
@@ -1101,10 +1106,13 @@ compassBtn.addEventListener('click', orientCameraNorth);
 // continue de piloter les contrôles et le raycast, inchangés) — seul le
 // RENDU visuel bascule sur l'orthographique pendant la vue plan.
 const orthoCamera = new THREE.OrthographicCamera(-100,100,100,-100,0.1,3000);
+AppState.setOrthoCamera(orthoCamera);
 let planViewActive = false;
+AppState.setPlanViewActive(planViewActive);
 let planViewSaved = null;
 function togglePlanView(){
   planViewActive = !planViewActive;
+  AppState.setPlanViewActive(planViewActive);
   const btn = document.getElementById('btn-plan-view');
   if(planViewActive){
     planViewSaved = {
@@ -4027,6 +4035,7 @@ let gridVisible = false;
 // c'est-à-dire "la façade qui regarde la place", ce qui est toujours vrai
 // géométriquement quelle que soit la convention d'axes du fichier.
 let hallFacadeWorldNormal = new THREE.Vector3(0,0,1); // valeur par défaut avant chargement
+AppState.setHallFacadeWorldNormal(hallFacadeWorldNormal);
 
 // worldRoot : parent commun UNIQUE de tout ce qui représente "le lieu" (maquette,
 // arbres, voies de circulation, bâtiments dessinés...). La correction d'axe
@@ -4035,9 +4044,11 @@ let hallFacadeWorldNormal = new THREE.Vector3(0,0,1); // valeur par défaut avan
 // .glb et les données importées (routes.json, etc.) : tout ce qui vit sous
 // worldRoot bouge exactement ensemble, quoi qu'il arrive.
 let worldRoot = new THREE.Group(); worldRoot.name = 'worldRoot';
+AppState.setWorldRoot(worldRoot);
 scene.add(worldRoot);
 
 let siteRoot = new THREE.Group(); siteRoot.name = 'siteRoot';
+AppState.setSiteRoot(siteRoot);
 worldRoot.add(siteRoot);
 // globalRoot ("Vue Globale", voir plus haut) : déclaré/assigné ICI (et non à
 // sa première mention plus haut dans le fichier) car il doit être enfant de
@@ -4047,17 +4058,22 @@ worldRoot.add(globalRoot);
 let polygonMesh = null;   // THREE.Mesh du polygone d'implantation
 let siteUpCorrected = false; // true si une rotation Z-up→Y-up a été appliquée à la maquette chargée
 let hallMesh = null;      // THREE.Mesh du hall de gare
+AppState.setHallMesh(hallMesh);
 let quartierGroup = null; // THREE.Object3D du contexte bâti
 let extensionGareMesh = null; // Object3D "Extension_Gare" — masqué par défaut, bouton dédié pour l'afficher
+AppState.setExtensionGareMesh(extensionGareMesh);
 let polygonParts = [];    // toutes les pièces "polygone_implantation" (pour le bouton "Voir PLU")
 let plzMaterialPLU = null, plzMaterialNormal = null, showingPLU = false;
 let glassMaterial = null; // matériau "glass" du .glb, réutilisé pour les nouveaux bâtiments
 let buildZone = ilotOutlinePts.slice(0,-1).map(p=>({x:p.x, z:p.z})); // fallback tant que rien n'est chargé
+AppState.setBuildZone(buildZone);
 
 function clearSite(){
   siteRoot.clear();
   polygonMesh = null; hallMesh = null; quartierGroup = null;
+  AppState.setHallMesh(hallMesh);
   extensionGareMesh = null; polygonParts = []; plzMaterialPLU = null; plzMaterialNormal = null; glassMaterial = null;
+  AppState.setExtensionGareMesh(extensionGareMesh);
   glassEmissiveMaterials = [];
   staticWindowMaterials = [];
   treeTemplate = null; // sera recapturé depuis la nouvelle maquette au prochain arbre planté
@@ -4375,8 +4391,10 @@ function onSiteLoaded(){
   polygonParts = polyParts;
   polygonMesh = polyParts[0] || null; // pièce "principale", utilisée pour la normale de façade etc.
   hallMesh    = findByNameCI(siteRoot, 'Hall_Gare');
+  AppState.setHallMesh(hallMesh);
   quartierGroup = findByNameCI(siteRoot, 'Quartier');
   extensionGareMesh = findByNameCI(siteRoot, 'Extension_Gare');
+  AppState.setExtensionGareMesh(extensionGareMesh);
   if(extensionGareMesh) extensionGareMesh.visible = false; // masquée par défaut — bouton "Ajouter Extension Gare"
   glassMaterial = findMaterialByName(siteRoot, 'glass');
   setupStaticWindowMaterials(siteRoot);
@@ -4402,6 +4420,7 @@ function onSiteLoaded(){
     }
     applyPLUView(showingPLU);
     buildZone = computeBuildZoneFromParts(polyParts);
+    AppState.setBuildZone(buildZone);
     updateBuildZoneVisual();
     setupGrassPaintOverlay(polyParts);
   }
@@ -4415,6 +4434,7 @@ function onSiteLoaded(){
       const polyCenter = buildZone.reduce((s,p)=>({x:s.x+p.x, z:s.z+p.z}), {x:0,z:0});
       polyCenter.x /= buildZone.length; polyCenter.z /= buildZone.length;
       hallFacadeWorldNormal = new THREE.Vector3(polyCenter.x - hallCenter.x, 0, polyCenter.z - hallCenter.z).normalize();
+      AppState.setHallFacadeWorldNormal(hallFacadeWorldNormal);
     }
   }
   if(quartierGroup){
@@ -4567,9 +4587,12 @@ fileGlb.addEventListener('change', (e)=>{
    STATE
    ============================================================ */
 let buildings = [];      // {id,name,points:[{x,z}],floors,bands:[{from,to,usage}],group,selected}
+AppState.setBuildings(buildings);
 let buildingsVisibleFlag = true; // oeil "Nouveau bâtiment" — état courant de visibilité
 let idCounter = 1;
+AppState.setIdCounter(idCounter);
 let drawing = false;
+AppState.setDrawing(drawing);
 let drawMode = 'polygon'; // 'polygon' | 'rect'
 let drawPoints = [];
 let rectDragging = false;
@@ -4723,6 +4746,7 @@ renderer.domElement.addEventListener('pointermove', (ev)=>{
 });
 
 let selectedId = null;
+AppState.setSelectedId(selectedId);
 
 /* ============================================================
    RAYCAST HELPERS
@@ -4792,6 +4816,7 @@ function updateDrawAreaLabel(){
 // `null.classList`, ce qui empêchait tout le reste de la fonction appelante
 // de s'exécuter — d'où l'impossibilité de dessiner un bâtiment).
 let drawMenuOpen = false;
+AppState.setDrawMenuOpen(drawMenuOpen);
 
 function refreshBldgMiniListVisibility(){
   const show = drawMenuOpen || drawing;
@@ -4799,6 +4824,7 @@ function refreshBldgMiniListVisibility(){
 }
 function openDrawMenu(){
   drawMenuOpen = true;
+  AppState.setDrawMenuOpen(drawMenuOpen);
   btnDraw.classList.add('active');
   const r = btnDraw.getBoundingClientRect();
   drawModePopout.style.left = (r.right + 8) + 'px';
@@ -4808,6 +4834,7 @@ function openDrawMenu(){
 }
 function closeDrawMenu(){
   drawMenuOpen = false;
+  AppState.setDrawMenuOpen(drawMenuOpen);
   drawModePopout.classList.remove('show');
   if(!drawing) btnDraw.classList.remove('active');
   refreshBldgMiniListVisibility();
@@ -4821,6 +4848,7 @@ function startDraw(mode){
   if(editingBuildingId) stopEditBuildingShape();
   drawMode = mode || 'polygon';
   drawing = true; drawPoints = [];
+  AppState.setDrawing(drawing);
   clearMarkers();
   btnDraw.classList.add('active');
   btnDraw.querySelector('.tool-btn-label').textContent = drawMode==='rect' ? 'Dessin en cours (rectangle)…' : 'Dessin en cours…';
@@ -4837,6 +4865,7 @@ function startDraw(mode){
 function cancelDraw(){
   const cancelledVolumeTargetId = volumeDrawTargetId; // mémorisé AVANT réinitialisation, pour rafraîchir la fiche bâtiment si besoin (voir plus bas)
   drawing = false; drawPoints = []; rectDragging = false; rectStartPt = null;
+  AppState.setDrawing(drawing);
   currentDrawLiveArea = null; currentDrawLiveCentroid = null;
   drawAreaLabel.classList.remove('show');
   clearMarkers();
@@ -5038,6 +5067,7 @@ function askFloorsThenBuild(finalPoints){
     // pendant le tracé dans updateTreesOverlapPreview).
     removeTreesUnderFootprint(finalPoints);
     selectedId = b.id;
+    AppState.setSelectedId(selectedId);
     renderList();
     startBuildingConstruction(b);
   }
@@ -5064,6 +5094,7 @@ function startVolumeDraw(b){
   volumeDrawRoofY = buildingTotalHeight(b);
   drawMode = 'polygon';
   drawing = true; drawPoints = [];
+  AppState.setDrawing(drawing);
   clearMarkers();
   showVolumeRoofGrid(b);
   // Tracé bien plus facile bloqué en vue plan (orthographique, du dessus),
@@ -5138,6 +5169,7 @@ function addVolumeToBuilding(b, pts, floors){
   rebuildMesh(b);
   renderList();
   selectedId = b.id;
+  AppState.setSelectedId(selectedId);
   openBldgEditWindow(b.id);
 }
 
@@ -5432,6 +5464,7 @@ let treeIdCounter = 1;
 let treesGroup = new THREE.Group(); worldRoot.add(treesGroup);
 let treesVisibleFlag = true; // oeil "Arbre"
 let treePlacing = false;
+AppState.setTreePlacing(treePlacing);
 const btnTree = document.getElementById('btn-tree');
 
 /* ============================================================
@@ -5506,6 +5539,7 @@ function startTreeTool(){
   if(extPendingSlice) extCancelPendingSlice(); else if(extEditMode) extHideExtension();
   if(editingBuildingId) stopEditBuildingShape();
   treePlacing = true;
+  AppState.setTreePlacing(treePlacing);
   btnTree.classList.add('active'); btnTree.querySelector('.tool-btn-label').textContent = 'Cliquez le polygone…';
   drawHint.classList.add('show');
   drawHintText.textContent = "Cliquez dans le polygone d'implantation pour planter un arbre · recliquez un arbre pour le retirer (Échap pour arrêter)";
@@ -5515,6 +5549,7 @@ function startTreeTool(){
 }
 function stopTreeTool(){
   treePlacing = false;
+  AppState.setTreePlacing(treePlacing);
   btnTree.classList.remove('active'); btnTree.querySelector('.tool-btn-label').textContent = 'Arbre';
   drawHint.classList.remove('show');
   controls.enabled = true;
@@ -5901,6 +5936,7 @@ function setupGrassPaintOverlay(parts){
 }
 
 let grassPainting = false;
+AppState.setGrassPainting(grassPainting);
 let grassPointerActive = false;
 const btnGrass = document.getElementById('btn-paint-grass');
 const grassBrushPopout = document.getElementById('grass-brush-popout');
@@ -5963,6 +5999,7 @@ function startGrassTool(){
   if(extPendingSlice) extCancelPendingSlice(); else if(extEditMode) extHideExtension();
   if(editingBuildingId) stopEditBuildingShape();
   grassPainting = true;
+  AppState.setGrassPainting(grassPainting);
   btnGrass.classList.add('active'); btnGrass.querySelector('.tool-btn-label').textContent = 'Glissez pour peindre…';
   drawHint.classList.add('show');
   drawHintText.textContent = "Glissez sur la place pour peindre du gazon · clic droit pour effacer (Échap pour arrêter)";
@@ -5974,6 +6011,7 @@ function startGrassTool(){
 }
 function stopGrassTool(){
   grassPainting = false;
+  AppState.setGrassPainting(grassPainting);
   btnGrass.classList.remove('active'); btnGrass.querySelector('.tool-btn-label').textContent = 'Gazon';
   drawHint.classList.remove('show');
   if(grassCursorDecal) grassCursorDecal.visible = false;
@@ -6177,6 +6215,7 @@ function createBuilding(pts, opts={}){
     // décidé sur des bâtiments existants qui pourraient rester en l'état.
     noRoofInset: !!opts.noRoofInset
   };
+  AppState.setIdCounter(idCounter);
   normalizeBands(b);
   worldRoot.add(b.group);
   b.group.visible = buildingsVisibleFlag;
@@ -6184,6 +6223,7 @@ function createBuilding(pts, opts={}){
   rebuildMesh(b);
   if(!opts.silent){
     selectedId = b.id;
+    AppState.setSelectedId(selectedId);
     renderList();
     openBldgEditWindow(b.id);
   }
@@ -6814,7 +6854,7 @@ function deleteBuilding(id, opts={}){
     drawHint.classList.remove('show'); drawHintEnter.style.display = '';
   }
   buildings = buildings.filter(x=>x.id!==id);
-  if(selectedId===id){ selectedId = null; updateBldgPanelVisibility(); }
+  if(selectedId===id){ selectedId = null; AppState.setSelectedId(null); updateBldgPanelVisibility(); }
   // Le halo de sélection (pourtour bleu clair à la base) a pu être ajouté à
   // b.group pendant que ce bâtiment était sélectionné ; comme on ne rappelle
   // pas rebuildMesh() après désélection ici, on le retire explicitement pour
@@ -7234,6 +7274,7 @@ window.addEventListener('pointerup', (ev)=>{
    temps exact du glissement d'un sommet).
    ============================================================ */
 let editingBuildingId = null;
+AppState.setEditingBuildingId(editingBuildingId);
 // Quand on édite le contour d'un décroché (une tranche avec son propre
 // polygone) plutôt que le socle : index de cette tranche dans b.bands, sinon
 // null (= on édite le socle, b.points, comme avant). Un seul et même système
@@ -7311,6 +7352,7 @@ function startEditBuildingShape(b, bandIndex=null){
   if(labelPlacing) stopLabelTool();
   if(extPendingSlice) extCancelPendingSlice(); else if(extEditMode) extHideExtension();
   editingBuildingId = b.id;
+  AppState.setEditingBuildingId(editingBuildingId);
   editingBandIndex = bandIndex;
   enterConstructionMode();
   applyConstructionGrayscale(b.group);
@@ -7330,6 +7372,7 @@ function startEditBuildingShape(b, bandIndex=null){
 function stopEditBuildingShape(){
   const id = editingBuildingId;
   editingBuildingId = null;
+  AppState.setEditingBuildingId(editingBuildingId);
   editingBandIndex = null;
   exitConstructionMode();
   bldgEditSnapshot = null;
@@ -7441,6 +7484,7 @@ function startCloneBuilding(source){
   });
   cloningBuildingId = clone.id;
   selectedId = clone.id; // pour que le pourtour de sélection (bleu/rouge) existe pendant le placement
+  AppState.setSelectedId(selectedId);
   rebuildAll();
   clonePivot = polygonCentroidXZ(clone.points);
   controls.enabled = false;
@@ -8381,7 +8425,7 @@ function openBldgEditWindow(id){
 }
 function closeBldgEditWindow(){
   if(editingBuildingId) stopEditBuildingShape();
-  if(selectedId !== null){ selectedId = null; rebuildAll(); renderList(); }
+  if(selectedId !== null){ selectedId = null; AppState.setSelectedId(null); rebuildAll(); renderList(); }
   bewSelectedForBuildingId = null; bewSelectedBandIndex = null;
   updateBldgPanelVisibility();
 }
@@ -9286,6 +9330,7 @@ document.addEventListener('click', (ev)=>{
   if(!btn || !toolbarLeft.contains(btn)) return;
   if(bldgPanel.contains(ev.target)) return;
   selectedId = null;
+  AppState.setSelectedId(selectedId);
   updateBldgPanelVisibility();
   rebuildAll();
   renderList();
@@ -9314,6 +9359,7 @@ let labels = [];
 let labelIdCounter = 1;
 let labelsVisible = true;
 let labelPlacing = false;
+AppState.setLabelPlacing(labelPlacing);
 // Mode de pose : 'ground' (au sol, comportement d'origine) ou 'building'
 // (collé sur une face ou un toit de bâtiment — socle ou volume supérieur,
 // peu importe : on raycast directement contre les meshes réels du bâtiment,
@@ -9472,6 +9518,7 @@ function updateLabelPositions(){
 }
 function stopLabelTool(){
   labelPlacing = false;
+  AppState.setLabelPlacing(labelPlacing);
   btnLabel.classList.remove('active');
   if(labelPlantHalo) labelPlantHalo.visible = false;
   if(labelSurfaceHalo) labelSurfaceHalo.visible = false;
@@ -9488,6 +9535,7 @@ btnLabel.addEventListener('click', ()=>{
     if(editingBuildingId) stopEditBuildingShape();
   }
   labelPlacing = !labelPlacing;
+  AppState.setLabelPlacing(labelPlacing);
   btnLabel.classList.toggle('active', labelPlacing);
   if(labelPlacing){
     positionLabelModePopout();
@@ -9876,7 +9924,9 @@ fileLoad.addEventListener('change', (e)=>{
       const data = JSON.parse(reader.result);
       buildings.forEach(b=>worldRoot.remove(b.group));
       buildings = [];
+      AppState.setBuildings(buildings);
       idCounter = 1;
+      AppState.setIdCounter(idCounter);
       let repairedCount = 0;
       (data.buildings||[]).forEach(b=>{
         let pts = b.points;
@@ -9887,6 +9937,7 @@ fileLoad.addEventListener('change', (e)=>{
         createBuilding(pts, {name:b.name, floors:b.floors, bands:b.bands});
       });
       selectedId = null;
+      AppState.setSelectedId(selectedId);
       updateBldgPanelVisibility();
 
       // Couleurs des légendes (avant rebuild des bâtiments, pour qu'ils
@@ -11118,6 +11169,7 @@ function extCreateSlice(faceC, referenceOutward, parentSlice){
     confirmed: false,
     group: new THREE.Group(),
   };
+  AppState.setIdCounter(idCounter);
   slice.group.name = 'ExtGareTranche';
   scene.add(slice.group);
   // Poignées en overlay DOM (comme le bouton +) : toujours à taille et
