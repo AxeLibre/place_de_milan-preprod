@@ -1819,11 +1819,19 @@ function motifTextureFor(motifId, floorHeightM){
     ctx.fill();
   }
   const tex = new THREE.CanvasTexture(canvas);
-  tex.wrapS = THREE.RepeatWrapping;
-  tex.wrapT = THREE.RepeatWrapping;
+  // ClampToEdge + pas de mipmap : le motif est déjà "bouclé" dans le shader
+  // via fract(cellCoord) (voir buildGlassWindowGLSL), donc le wrapping GPU
+  // n'est pas nécessaire — et l'éviter garantit que la texture (dimensions non
+  // multiples de deux, puisque calées sur la vraie hauteur d'étage en mètres)
+  // s'affiche correctement sur toutes les configurations WebGL. Avec
+  // RepeatWrapping + mipmap sur une texture non multiple de deux, certains
+  // contextes la traitent comme incomplète et la lisent en noir uni — c'était
+  // le bug "changer le motif ne change rien" : plus aucune fenêtre nulle part.
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
   tex.magFilter = THREE.LinearFilter;
-  tex.minFilter = THREE.LinearMipmapLinearFilter;
-  tex.generateMipmaps = true;
+  tex.minFilter = THREE.LinearFilter;
+  tex.generateMipmaps = false;
   tex.needsUpdate = true;
   motifTextureCache.set(key, tex);
   return tex;
@@ -10362,6 +10370,10 @@ function buildBandEditor(b, idx){
   // ---------- Façade personnalisable : forme du motif de fenêtre (sauf
   // commerces, qui gardent leurs grandes baies dédiées) + teinte de façade
   // (toujours réglable, quel que soit l'usage). ----------
+  // Boutons de motif : gardés dans une closure locale (motifBtns) pour
+  // pouvoir rafraîchir juste leur aperçu (couleur de façade) sans jamais
+  // recréer le <input type="color"> plus bas — voir la note sur tintInp.
+  const motifBtns = [];
   if(!isCommerceBand){
     const motifTitle = document.createElement('div');
     motifTitle.style.cssText = 'color:var(--muted);flex-shrink:0;font-size:11px;margin-top:4px;';
@@ -10382,6 +10394,7 @@ function buildBandEditor(b, idx){
         band.facadeMotif = mid;
         rebuildMesh(b); renderBldgEditWindow(b);
       });
+      motifBtns.push({ mid, btn });
       motifRow.appendChild(btn);
     });
     wrap.appendChild(motifRow);
@@ -10396,7 +10409,26 @@ function buildBandEditor(b, idx){
   tintInp.type = 'color';
   tintInp.value = band.facadeTint || DEFAULT_FACADE_TINT;
   tintInp.style.cssText = 'width:34px;height:26px;padding:0;border:1px solid #2a3946;border-radius:5px;background:none;cursor:pointer;flex-shrink:0;';
+  // IMPORTANT : pendant qu'on glisse le curseur dans le sélecteur de couleur
+  // natif du navigateur, 'input' se déclenche en continu — si on reconstruit
+  // tout le panneau (renderBldgEditWindow, qui vide body.innerHTML et donc
+  // recrée CET input) à chaque tick, Chrome referme aussitôt le petit panneau
+  // de sélection de couleur puisque l'élément qui le porte vient de
+  // disparaître du DOM. On ne touche donc plus au panneau pendant le
+  // glissé : on met juste à jour le bâtiment en 3D et les aperçus de motif
+  // (qui affichent la teinte de façade) directement, sans jamais recréer
+  // tintInp lui-même. Le reste du panneau (dont un `value` à jour sur cet
+  // input, au cas où) n'est resynchronisé qu'au relâchement ('change').
   tintInp.addEventListener('input', ()=>{
+    band.facadeTint = tintInp.value;
+    rebuildMesh(b);
+    motifBtns.forEach(({mid, btn})=>{
+      btn.innerHTML = motifSvgPreview(mid, band.facadeTint);
+      const svgEl = btn.querySelector('svg');
+      if(svgEl) svgEl.style.cssText = 'width:100%;height:100%;display:block;';
+    });
+  });
+  tintInp.addEventListener('change', ()=>{
     band.facadeTint = tintInp.value;
     rebuildMesh(b); renderBldgEditWindow(b);
   });
