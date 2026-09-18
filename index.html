@@ -1962,9 +1962,10 @@ function buildGlassWindowGLSL(usage, motifParams){
 `;
   }
 }
-function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facadeTintHex, isGroundBand){
+function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facadeTintHex, isGroundBand, bandBaseY){
   usage = usage || DEFAULT_USAGE;
   floorHeightM = floorHeightM || 3;
+  bandBaseY = bandBaseY || 0;
   const isCommerce = usage === 'commerces';
   const pitch = isCommerce ? COMMERCE_BAY_WIDTH_M : MOTIF_PITCH_M;
   // Toujours calculé (même pour les commerces, qui l'ignorent) pour que
@@ -1989,6 +1990,7 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facade
     uNightWin:      { value: (!editing && typeof isNight!=='undefined' && isNight) ? GLASS_WINDOW_EMISSIVE_INTENSITY : 0 },
     uPitch:         { value: pitch },
     uFloorH:        { value: floorHeightM },
+    uBandBaseY:     { value: bandBaseY },
     uMarginSideM:   { value: COMMERCE_WIN_MARGIN_SIDE_M },
     uMarginTopM:    { value: COMMERCE_WIN_MARGIN_TOP_M },
     uSignWinHeightM:{ value: COMMERCE_SIGN_WINDOW_HEIGHT_M },
@@ -2021,7 +2023,7 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facade
       .replace('#include <common>', `#include <common>
 varying vec3 vWorldPosNW;
 varying vec3 vNormalNW;
-uniform float uNightWin, uPitch, uFloorH, uIsGroundBand;
+uniform float uNightWin, uPitch, uFloorH, uIsGroundBand, uBandBaseY;
 uniform float uMarginSideM, uMarginTopM, uSignWinHeightM, uSignGapM, uSignHeightM;
 uniform float uLitProb, uWarmthRange, uFloorBright, uFloorHue, uTechFloorProb;
 uniform vec3 uWallColor, uGlassColor, uFloorCoolColor;
@@ -2040,7 +2042,14 @@ vec3 hue2rgbNW(float h){
 {
   float alongWall = (abs(vNormalNW.x) > abs(vNormalNW.z)) ? vWorldPosNW.z : vWorldPosNW.x;
   vec2 cellSize = vec2(uPitch, uFloorH);
-  vec2 cellCoord = vec2(alongWall, vWorldPosNW.y) / cellSize;
+  // vWorldPosNW.y est la hauteur ABSOLUE dans le bâtiment (toutes tranches
+  // précédentes cumulées, potentiellement avec des hauteurs d'étage
+  // différentes). On la ramène à l'origine de CETTE tranche (uBandBaseY,
+  // = bas du tout premier étage de la tranche) avant de diviser par sa
+  // propre hauteur d'étage — sinon la grille verticale ne tombe pas sur les
+  // planchers réels et les fenêtres sont coupées à cheval sur deux étages.
+  float localY = vWorldPosNW.y - uBandBaseY;
+  vec2 cellCoord = vec2(alongWall, localY) / cellSize;
   vec2 cellId = floor(cellCoord);
   vec2 cellUV = fract(cellCoord);
   float inWindow, inSign;
@@ -2062,7 +2071,7 @@ metalnessFactor = mix(mix(0.0, 0.3, nwInWindow), 0.05, nwInSign);`)
   float r = hash12NW(nwCellId);
   float lit = step(r, uLitProb);
   float warmth = 1.0 - uWarmthRange*0.5 + uWarmthRange*hash12NW(nwCellId + 17.0);
-  float floorId = floor(vWorldPosNW.y / uFloorH);
+  float floorId = floor((vWorldPosNW.y - uBandBaseY) / uFloorH);
   float floorBrightRnd = hash12NW(vec2(floorId, 91.7));
   float floorHueRnd = hash12NW(vec2(floorId, 5.3));
   float floorBrightness = 1.0 - uFloorBright*0.5 + uFloorBright*floorBrightRnd;
@@ -8124,7 +8133,7 @@ function rebuildMesh(b){
       for(let f=band.from; f<=band.to; f++) bandHeight += floorHeightFor(usageAtFloor(b,f));
       const geo = new THREE.ExtrudeGeometry(shape, { depth: bandHeight, bevelEnabled:false, curveSegments:1 });
       geo.rotateX(-Math.PI/2);
-      const mat = glassMaterialFor(editing, floorHeightFor(band.usage || DEFAULT_USAGE), band.usage || DEFAULT_USAGE, b.id + ':' + idx, band.facadeMotif, band.facadeTint, band.from === 1);
+      const mat = glassMaterialFor(editing, floorHeightFor(band.usage || DEFAULT_USAGE), band.usage || DEFAULT_USAGE, b.id + ':' + idx, band.facadeMotif, band.facadeTint, band.from === 1, yCursor);
       b._glassMats.push(mat);
       glassEmissiveMaterials.push(mat);
       const mesh = new THREE.Mesh(geo, mat);
