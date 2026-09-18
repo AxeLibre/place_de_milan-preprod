@@ -1861,7 +1861,7 @@ function hashStringToInt(str){
 // variables cellId/cellUV (position dans la cellule baie×étage courante)
 // sont déjà calculées par l'appelant. `inWindow`/`inSign` sont déjà déclarées
 // (float) par l'appelant — ce morceau se contente de les affecter.
-function buildGlassWindowGLSL(usage){
+function buildGlassWindowGLSL(usage, motifParams){
   if(usage === 'commerces'){
     return `
   {
@@ -1900,54 +1900,67 @@ function buildGlassWindowGLSL(usage){
 `;
   }
   // Tous les autres usages : la forme de la fenêtre du motif choisi est
-  // calculée ICI, par fragment, avec les mêmes formules "distance de bord +
-  // smoothstep" que la logique commerces ci-dessus — trois formes possibles
-  // (uMotifKind), toutes en fractions de cellule (uMotifWFrac/HFrac/SillFrac/
-  // SkewFrac/ArchRyFrac, préparées par motifParamsFor() dans glassMaterialFor).
-  return `
+  // calculée ICI, par fragment.  Les valeurs du motif sont EMBARQUÉES comme
+  // constantes GLSL (pas des uniforms) afin de produire un source GLSL
+  // différent par motif, ce qui force Three.js à recompiler le shader au lieu
+  // de réutiliser un programme en cache.
+  const mp = motifParams || motifParamsFor(DEFAULT_MOTIF, 3);
+  const W  = mp.wFrac.toFixed(6);
+  const H  = mp.hFrac.toFixed(6);
+  const S  = mp.sillFrac.toFixed(6);
+  const SK = mp.skewFrac.toFixed(6);
+  const AR = mp.archRyFrac.toFixed(6);
+  const K  = mp.kind;  // integer 0,1,2
+
+  if(K === 0){
+    // rect : rectangle droit, centré
+    return `
   {
-    if(uMotifKind < 0.5){
-      // rect : rectangle droit, centré, de largeur/hauteur/allège données
-      float xDist = abs(cellUV.x - 0.5) - uMotifWFrac*0.5;
-      float yDist = -min(cellUV.y - uMotifSillFrac, (uMotifSillFrac+uMotifHFrac) - cellUV.y);
-      float edge = max(xDist, yDist);
-      float aa = max(fwidth(edge), 0.001);
-      inWindow = 1.0 - smoothstep(-aa, aa, edge);
-    } else if(uMotifKind < 1.5){
-      // parallelogram : même rectangle, mais dont le centre horizontal glisse
-      // linéairement du bas (0) au haut (uMotifSkewFrac) — fenêtre "inclinée"
-      float t = clamp((cellUV.y - uMotifSillFrac)/max(uMotifHFrac, 0.0001), 0.0, 1.0);
-      float cx = 0.5 + uMotifSkewFrac*t;
-      float xDist = abs(cellUV.x - cx) - uMotifWFrac*0.5;
-      float yDist = -min(cellUV.y - uMotifSillFrac, (uMotifSillFrac+uMotifHFrac) - cellUV.y);
-      float edge = max(xDist, yDist);
-      float aa = max(fwidth(edge), 0.001);
-      inWindow = 1.0 - smoothstep(-aa, aa, edge);
-    } else {
-      // arch : corps rectangulaire jusqu'à uMotifSillFrac+uMotifHFrac, puis
-      // demi-cercle au-dessus — rayon réel identique en x et en y (le rayon
-      // en mètres vaut uMotifWFrac*0.5 du pitch), mais la cellule n'étant pas
-      // carrée en mètres, on normalise x par le rayon-x (uMotifWFrac*0.5) et
-      // y par le rayon-y (uMotifArchRyFrac) pour obtenir un VRAI cercle.
-      float bodyBottom = uMotifSillFrac;
-      float bodyTop = uMotifSillFrac + uMotifHFrac;
-      float rX = max(uMotifWFrac*0.5, 0.0001);
-      float rY = max(uMotifArchRyFrac, 0.0001);
-      float edge;
-      if(cellUV.y <= bodyTop){
-        float xDist = abs(cellUV.x - 0.5) - rX;
-        float yDist = -min(cellUV.y - bodyBottom, bodyTop - cellUV.y);
-        edge = max(xDist, yDist);
-      } else {
-        vec2 p = vec2((cellUV.x - 0.5)/rX, (cellUV.y - bodyTop)/rY);
-        edge = (length(p) - 1.0) * rY;
-      }
-      float aa = max(fwidth(edge), 0.001);
-      inWindow = 1.0 - smoothstep(-aa, aa, edge);
-    }
+    float xDist = abs(cellUV.x - 0.5) - ${W}*0.5;
+    float yDist = -min(cellUV.y - ${S}, (${S}+${H}) - cellUV.y);
+    float edge = max(xDist, yDist);
+    float aa = max(fwidth(edge), 0.001);
+    inWindow = 1.0 - smoothstep(-aa, aa, edge);
     inSign = 0.0;
   }
 `;
+  } else if(K === 1){
+    // parallelogram : fenêtre inclinée
+    return `
+  {
+    float t = clamp((cellUV.y - ${S})/max(${H}, 0.0001), 0.0, 1.0);
+    float cx = 0.5 + ${SK}*t;
+    float xDist = abs(cellUV.x - cx) - ${W}*0.5;
+    float yDist = -min(cellUV.y - ${S}, (${S}+${H}) - cellUV.y);
+    float edge = max(xDist, yDist);
+    float aa = max(fwidth(edge), 0.001);
+    inWindow = 1.0 - smoothstep(-aa, aa, edge);
+    inSign = 0.0;
+  }
+`;
+  } else {
+    // arch : rectangle + demi-cercle
+    return `
+  {
+    float bodyBottom = ${S};
+    float bodyTop = ${S} + ${H};
+    float rX = max(${W}*0.5, 0.0001);
+    float rY = max(${AR}, 0.0001);
+    float edge;
+    if(cellUV.y <= bodyTop){
+      float xDist = abs(cellUV.x - 0.5) - rX;
+      float yDist = -min(cellUV.y - bodyBottom, bodyTop - cellUV.y);
+      edge = max(xDist, yDist);
+    } else {
+      vec2 p = vec2((cellUV.x - 0.5)/rX, (cellUV.y - bodyTop)/rY);
+      edge = (length(p) - 1.0) * rY;
+    }
+    float aa = max(fwidth(edge), 0.001);
+    inWindow = 1.0 - smoothstep(-aa, aa, edge);
+    inSign = 0.0;
+  }
+`;
+  }
 }
 function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facadeTintHex, isGroundBand){
   usage = usage || DEFAULT_USAGE;
@@ -1976,12 +1989,6 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facade
     uNightWin:      { value: (!editing && typeof isNight!=='undefined' && isNight) ? GLASS_WINDOW_EMISSIVE_INTENSITY : 0 },
     uPitch:         { value: pitch },
     uFloorH:        { value: floorHeightM },
-    uMotifKind:       { value: motifParams.kind },
-    uMotifWFrac:      { value: motifParams.wFrac },
-    uMotifHFrac:      { value: motifParams.hFrac },
-    uMotifSillFrac:   { value: motifParams.sillFrac },
-    uMotifSkewFrac:   { value: motifParams.skewFrac },
-    uMotifArchRyFrac: { value: motifParams.archRyFrac },
     uMarginSideM:   { value: COMMERCE_WIN_MARGIN_SIDE_M },
     uMarginTopM:    { value: COMMERCE_WIN_MARGIN_TOP_M },
     uSignWinHeightM:{ value: COMMERCE_SIGN_WINDOW_HEIGHT_M },
@@ -1998,6 +2005,11 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facade
     uTechFloorProb: { value: allLit ? 0.05 : 0 }
   };
 
+  // Clé de cache unique par motif+usage+tint pour FORCER Three.js à
+  // recompiler le shader quand le motif change, au lieu de réutiliser un
+  // programme en cache dont onBeforeCompile ne se relance pas.
+  m.customProgramCacheKey = usage + '|' + (motifId || DEFAULT_MOTIF) + '|' + (facadeTintHex || DEFAULT_FACADE_TINT) + '|' + (isGroundBand?1:0);
+
   // En cours d'édition (aperçu quasi-transparent) on n'allume jamais les
   // fenêtres, même de nuit — ça n'a pas de sens sur un volume fantôme.
   m.onBeforeCompile = (shader)=>{
@@ -2010,7 +2022,6 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facade
 varying vec3 vWorldPosNW;
 varying vec3 vNormalNW;
 uniform float uNightWin, uPitch, uFloorH, uIsGroundBand;
-uniform float uMotifKind, uMotifWFrac, uMotifHFrac, uMotifSillFrac, uMotifSkewFrac, uMotifArchRyFrac;
 uniform float uMarginSideM, uMarginTopM, uSignWinHeightM, uSignGapM, uSignHeightM;
 uniform float uLitProb, uWarmthRange, uFloorBright, uFloorHue, uTechFloorProb;
 uniform vec3 uWallColor, uGlassColor, uFloorCoolColor;
@@ -2033,7 +2044,7 @@ vec3 hue2rgbNW(float h){
   vec2 cellId = floor(cellCoord);
   vec2 cellUV = fract(cellCoord);
   float inWindow, inSign;
-${buildGlassWindowGLSL(usage)}
+${buildGlassWindowGLSL(usage, motifParams)}
   vec3 signColor = hue2rgbNW(hash12NW(cellId + 4.7));
   vec3 dayColor = mix(uWallColor, uGlassColor, inWindow);
   dayColor = mix(dayColor, signColor, inSign);
