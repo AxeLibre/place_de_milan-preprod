@@ -21,6 +21,7 @@ export let renderer = null;
 export let orthoCamera = null;
 export let worldRoot = null;
 export let siteRoot = null;
+export let globalRoot = null;
 
 export let buildZone = [];
 export let buildings = [];
@@ -47,6 +48,7 @@ export function setRenderer(v){ renderer = v; }
 export function setOrthoCamera(v){ orthoCamera = v; }
 export function setWorldRoot(v){ worldRoot = v; }
 export function setSiteRoot(v){ siteRoot = v; }
+export function setGlobalRoot(v){ globalRoot = v; }
 
 export function setBuildZone(v){ buildZone = v; }
 export function setBuildings(v){ buildings = v; }
