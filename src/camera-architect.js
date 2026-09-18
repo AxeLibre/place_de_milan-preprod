@@ -16,7 +16,7 @@ import {
 } from './state.js';
 import { polygonAreaXZ } from './geometry-utils.js';
 import { USAGE_COLORS, USAGE_LABELS } from './config.js';
-import { footprintForBand, usageAtFloor, buildingTotalHeight, buildingTotalFloorArea } from './building-utils.js';
+import { footprintForBand, usageAtFloor, buildingTotalHeight, buildingTotalFloorArea, floorHeightFor } from './building-utils.js';
 import * as ExtGare from './extension-gare.js';
 import * as CameraSkyline from './camera-skyline.js';
 
