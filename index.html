@@ -404,11 +404,16 @@ import {
 import * as AppState from './src/state.js';
 import { dedupe, convexHullXZ } from './src/geometry-utils.js';
 import { findByNameCI, findAllByNameCI } from './src/scene-utils.js';
-import { NEON_BLUE, FLOOR_HEIGHT, FLOOR_HEIGHTS, USAGE_COLORS, USAGE_LABELS, DEFAULT_USAGE } from './src/config.js';
+import { NEON_BLUE, NEON_BLUE_CSS, FLOOR_HEIGHT, FLOOR_HEIGHTS, USAGE_COLORS, USAGE_LABELS, DEFAULT_USAGE } from './src/config.js';
 import { floorHeightFor, usageAtFloor, footprintForBand, buildingTotalHeight, buildingTotalFloorArea } from './src/building-utils.js';
+import { treePlacing, treesGroup, grassPainting, labelGroup, labelsVisible, labels, drawing, drawMenuOpen } from './src/state.js';
 import * as ExtGare from './src/extension-gare.js';
 import * as CameraSkyline from './src/camera-skyline.js';
 import * as CameraArchitect from './src/camera-architect.js';
+import * as Trees from './src/trees.js';
+import * as Grass from './src/grass.js';
+import * as Labels from './src/labels.js';
+import * as DrawTool from './src/draw-tool.js';
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -974,6 +979,15 @@ if(new URLSearchParams(location.search).get('admin')==='1'){
 
 const viewport = document.getElementById('viewport');
 const statusLine = document.getElementById('status-line');
+// Références DOM dupliquées ici (l'outil de tracé lui-même — src/draw-tool.js
+// — fait les mêmes lookups pour son propre usage) : quelques fonctions restées
+// ici (mode construction, blocage hors périmètre, déplacement/clonage de
+// bâtiment) pilotent aussi ce bandeau d'indication.
+const btnDraw = document.getElementById('btn-draw');
+const drawModePopout = document.getElementById('draw-mode-popout');
+const drawHint = document.getElementById('draw-hint');
+const drawHintText = document.getElementById('draw-hint-text');
+const drawHintEnter = document.getElementById('draw-hint-enter');
 const scene = new THREE.Scene();
 AppState.setScene(scene);
 let bldgHoverMaterial = null; // assigné plus bas (voir survol bâtiment) ; déclaré ici tôt car resize() y fait référence dès le chargement
@@ -1156,8 +1170,8 @@ function lockPlanViewForVolumeDraw(b){
   // à `dist` tout court se retrouvait sous, ou juste au ras, du toit — trop
   // près pour voir la grille de repère et le curseur de tracé. La cible suit
   // la même hauteur, pour un vrai aplomb vertical (vue plan) sans angle.
-  camera.position.set(cx, volumeDrawRoofY + dist, cz + 0.01);
-  controls.target.set(cx, volumeDrawRoofY, cz);
+  camera.position.set(cx, DrawTool.volumeDrawRoofY + dist, cz + 0.01);
+  controls.target.set(cx, DrawTool.volumeDrawRoofY, cz);
   controls.update();
 }
 function unlockPlanViewAfterVolumeDraw(){
@@ -1285,7 +1299,7 @@ function _grayscaleTargetRoots(exceptGroup){
   if(typeof siteRoot!=='undefined' && siteRoot) roots.push(siteRoot);
   if(typeof buildings!=='undefined') buildings.forEach(b=>{ if(b.group!==exceptGroup) roots.push(b.group); });
   if(typeof treesGroup!=='undefined' && treesGroup) roots.push(treesGroup);
-  if(typeof grassParts!=='undefined') grassParts.forEach(g=>{ if(g.overlayMesh) roots.push(g.overlayMesh); });
+  Grass.grassParts.forEach(g=>{ if(g.overlayMesh) roots.push(g.overlayMesh); });
   return roots;
 }
 function applyConstructionGrayscale(exceptGroup){
@@ -1483,11 +1497,11 @@ function enterPedestrianMode(){
   // Ferme l'outil en cours (tracé, arbre, gazon, labels, édition, déplacement,
   // extension gare) avant de basculer — la navigation piéton ne doit jamais
   // laisser un outil actif "en arrière-plan", invisible mais toujours armé.
-  if(drawing) cancelDraw();
-  if(drawMenuOpen) closeDrawMenu();
-  if(treePlacing) stopTreeTool();
-  if(grassPainting) stopGrassTool();
-  if(labelPlacing) stopLabelTool();
+  if(drawing) DrawTool.cancelDraw();
+  if(drawMenuOpen) DrawTool.closeDrawMenu();
+  if(treePlacing) Trees.stopTreeTool();
+  if(grassPainting) Grass.stopGrassTool();
+  if(labelPlacing) Labels.stopLabelTool();
   if(editingBuildingId) stopEditBuildingShape();
   if(movingBuildingId) stopMoveBuilding();
   ExtGare.cancelExtensionGareIfActive();
@@ -1715,11 +1729,11 @@ function activateGlobalView(){
   if(pedestrianModeActive) exitPedestrianMode(); // les deux modes de caméra libre sont mutuellement exclusifs
   // Ferme l'outil en cours, comme à l'entrée en mode piéton — la Vue Globale
   // ne doit pas non plus laisser un outil actif "en arrière-plan".
-  if(drawing) cancelDraw();
-  if(drawMenuOpen) closeDrawMenu();
-  if(treePlacing) stopTreeTool();
-  if(grassPainting) stopGrassTool();
-  if(labelPlacing) stopLabelTool();
+  if(drawing) DrawTool.cancelDraw();
+  if(drawMenuOpen) DrawTool.closeDrawMenu();
+  if(treePlacing) Trees.stopTreeTool();
+  if(grassPainting) Grass.stopGrassTool();
+  if(labelPlacing) Labels.stopLabelTool();
   if(editingBuildingId) stopEditBuildingShape();
   if(movingBuildingId) stopMoveBuilding();
   ExtGare.cancelExtensionGareIfActive();
@@ -1809,7 +1823,7 @@ function exitGlobalView(){
   globalViewCloseBar.classList.remove('show');
   keysDown.clear();
   globalRoot.visible = false;
-  treesGroup.visible = treesVisibleFlag; // restaure l'état normal (œil "Arbre")
+  treesGroup.visible = Trees.getTreesVisible(); // restaure l'état normal (œil "Arbre")
   siteRoot.traverse(o=>{ if(/icosph/i.test(o.name||'')) o.visible = true; });
   // Retour au rendu normal (coloration par usage si "Légendes" était actif
   // avant l'entrée en Vue Globale) — voir le forçage symétrique dans
@@ -2019,11 +2033,11 @@ CameraArchitect.initCameraArchitect({
   getPedestrianModeActive: () => pedestrianModeActive,
   getGlobalViewActive: () => globalViewActive,
   exitGlobalView,
-  cancelDraw,
-  closeDrawMenu,
-  stopTreeTool,
-  stopGrassTool,
-  stopLabelTool,
+  cancelDraw: DrawTool.cancelDraw,
+  closeDrawMenu: DrawTool.closeDrawMenu,
+  stopTreeTool: Trees.stopTreeTool,
+  stopGrassTool: Grass.stopGrassTool,
+  stopLabelTool: Labels.stopLabelTool,
   stopEditBuildingShape,
   getMovingBuildingId: () => movingBuildingId,
   stopMoveBuilding,
@@ -2185,6 +2199,7 @@ ground.name = 'ground';
 // bâtiments, tracé des voies, etc.) — il ne doit plus s'afficher à l'écran.
 ground.visible = false;
 groundGroup.add(ground);
+AppState.setGround(ground);
 
 // Grille de sol : reconstruite dynamiquement pour ne jamais dépasser le
 // polygone d'implantation (voir rebuildGrid(), appelée dès que buildZone change).
@@ -2268,8 +2283,7 @@ function clearSite(){
   AppState.setExtensionGareMesh(extensionGareMesh);
   glassEmissiveMaterials = [];
   staticWindowMaterials = [];
-  treeTemplate = null; // sera recapturé depuis la nouvelle maquette au prochain arbre planté
-  roofSphereTemplate = null; // idem pour le gabarit "sphère" des coins de toit
+  Trees.resetTemplates(); // gabarits arbre/sphère : à recapturer depuis la nouvelle maquette
   siteUpCorrected = false;
 }
 
@@ -2585,7 +2599,7 @@ function onSiteLoaded(){
     buildZone = computeBuildZoneFromParts(polyParts);
     AppState.setBuildZone(buildZone);
     updateBuildZoneVisual();
-    setupGrassPaintOverlay(polyParts);
+    Grass.setupGrassPaintOverlay(polyParts);
   }
   collectSiteLights();
   collectDetectorZones();
@@ -2752,21 +2766,9 @@ fileGlb.addEventListener('change', (e)=>{
 let buildings = [];      // {id,name,points:[{x,z}],floors,bands:[{from,to,usage}],group,selected}
 AppState.setBuildings(buildings);
 let buildingsVisibleFlag = true; // oeil "Nouveau bâtiment" — état courant de visibilité
-let drawing = false;
-AppState.setDrawing(drawing);
-let drawMode = 'polygon'; // 'polygon' | 'rect'
-let drawPoints = [];
-let rectDragging = false;
-let rectStartPt = null;
-let drawMarkers = new THREE.Group();
-let previewLine = null;
-worldRoot.add(drawMarkers);
-// Tracé d'un "volume supérieur" (décroché posé sur le toit d'un bâtiment
-// existant) : réutilise exactement la même machine à état que le tracé d'un
-// nouveau bâtiment (drawing/drawPoints/drawMode/finishDraw…), simplement
-// signalée par cet id non-nul — voir startVolumeDraw().
-let volumeDrawTargetId = null;
-let volumeDrawRoofY = 0;
+// drawing/drawMode/drawPoints/rectDragging/rectStartPt/drawMarkers/previewLine/
+// volumeDrawTargetId/volumeDrawRoofY : outil de tracé externalisé, voir
+// src/draw-tool.js (module DrawTool, initialisé plus bas).
 
 /* ------------------------------------------------------------
    Marqueurs à taille d'écran CONSTANTE quel que soit le zoom —
@@ -2813,7 +2815,6 @@ function updateScreenSizedMarkers(){
    REPÈRES CIRCULAIRES (textures radiales) — utilisés pour le guide de
    tracé, le pinceau de gazon et les anneaux de sélection de sommets.
    ============================================================ */
-const NEON_BLUE_CSS = '46,232,255';
 // mode "fill" : plein au centre, transparent vers l'extérieur (dégradé standard)
 // mode "ring" : plein sur le bord intérieur, transparent en allant vers le centre (anneau)
 function makeRadialCircleTexture(rgb, mode){
@@ -2887,8 +2888,8 @@ function updateDrawGuide(pt){
   const t = performance.now()/1000;
   const pulse = 2.6 + Math.sin(t*3.2)*0.35;
   drawGuideRing.scale.setScalar(pulse/2.6);
-  if(drawPoints.length>0){
-    const from = drawPoints[drawPoints.length-1];
+  if(DrawTool.drawPoints.length>0){
+    const from = DrawTool.drawPoints[DrawTool.drawPoints.length-1];
     const pts = [new THREE.Vector3(from.x,0.25,from.z), new THREE.Vector3(target.x,0.25,target.z)];
     drawGuideSegment.geometry.setFromPoints(pts);
     drawGuideSegment.computeLineDistances();
@@ -2902,7 +2903,7 @@ renderer.domElement.addEventListener('pointermove', (ev)=>{
   if(!drawing) return;
   const livePt = groundPointFromEvent(ev);
   updateDrawGuide(livePt);
-  updateTreesOverlapPreview(livePt);
+  Trees.updateTreesOverlapPreview(livePt);
 });
 
 let selectedId = null;
@@ -2913,6 +2914,8 @@ AppState.setSelectedId(selectedId);
    ============================================================ */
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
+AppState.setRaycaster(raycaster);
+AppState.setPointer(pointer);
 const _roofPlane = new THREE.Plane(new THREE.Vector3(0,1,0), 0);
 const _roofPlaneHit = new THREE.Vector3();
 function groundPointFromEvent(ev){
@@ -2923,8 +2926,8 @@ function groundPointFromEvent(ev){
   // Tracé d'un volume supérieur : on vise le toit du bâtiment ciblé (plan
   // horizontal à sa hauteur), pas le sol — sinon impossible de poser des
   // sommets "en l'air" au-dessus d'un bâtiment existant.
-  if(volumeDrawTargetId!==null){
-    _roofPlane.constant = -volumeDrawRoofY;
+  if(DrawTool.volumeDrawTargetId!==null){
+    _roofPlane.constant = -DrawTool.volumeDrawRoofY;
     const hit = raycaster.ray.intersectPlane(_roofPlane, _roofPlaneHit);
     return hit ? {x:hit.x, y:hit.y, z:hit.z} : null;
   }
@@ -2945,547 +2948,25 @@ function groundPointFromEvent(ev){
 }
 
 /* ============================================================
-   DRAW MODE
+   OUTIL DE TRACÉ — module externalisé (src/draw-tool.js).
    ============================================================ */
-const btnDraw = document.getElementById('btn-draw');
-const drawModePopout = document.getElementById('draw-mode-popout');
-const btnModeRect = document.getElementById('btn-mode-rect');
-const btnModePoly = document.getElementById('btn-mode-poly');
-const drawHint = document.getElementById('draw-hint');
-const drawHintText = document.getElementById('draw-hint-text');
-const drawHintEnter = document.getElementById('draw-hint-enter');
-const drawAreaLabel = document.getElementById('draw-area-label');
-let currentDrawLiveArea = null, currentDrawLiveCentroid = null;
-const _drawAreaProjVec = new THREE.Vector3();
-function updateDrawAreaLabel(){
-  if(!drawing || currentDrawLiveArea===null || !currentDrawLiveCentroid){
-    drawAreaLabel.classList.remove('show');
-    return;
-  }
-  // Affichage fixe en haut au centre de l'écran (voir CSS #draw-area-label) —
-  // ne suit plus le tracé en 3D : plus simple à lire, et jamais caché par un
-  // bâtiment ou un angle de caméra défavorable.
-  drawAreaLabel.textContent = `${currentDrawLiveArea.toFixed(0)} m² au sol`;
-  drawAreaLabel.classList.add('show');
-}
-// NOTE : #bldg-mini-list a été remplacé par la liste permanente du panneau
-// #bldg-panel (déplacé sous le menu outils) — cette variable ne correspond
-// plus à aucun élément du DOM. On garde uniquement le rafraîchissement de la
-// liste (renderList), sans toucher à une classe "show" sur un élément qui
-// n'existe plus (l'ancien code plantait ici avec une TypeError sur
-// `null.classList`, ce qui empêchait tout le reste de la fonction appelante
-// de s'exécuter — d'où l'impossibilité de dessiner un bâtiment).
-let drawMenuOpen = false;
-AppState.setDrawMenuOpen(drawMenuOpen);
-
-function refreshBldgMiniListVisibility(){
-  const show = drawMenuOpen || drawing;
-  if(show) renderList();
-}
-function openDrawMenu(){
-  drawMenuOpen = true;
-  AppState.setDrawMenuOpen(drawMenuOpen);
-  btnDraw.classList.add('active');
-  const r = btnDraw.getBoundingClientRect();
-  drawModePopout.style.left = (r.right + 8) + 'px';
-  drawModePopout.style.top = r.top + 'px';
-  drawModePopout.classList.add('show');
-  refreshBldgMiniListVisibility();
-}
-function closeDrawMenu(){
-  drawMenuOpen = false;
-  AppState.setDrawMenuOpen(drawMenuOpen);
-  drawModePopout.classList.remove('show');
-  if(!drawing) btnDraw.classList.remove('active');
-  refreshBldgMiniListVisibility();
-}
-
-function startDraw(mode){
-  if(treePlacing) stopTreeTool();
-  if(grassPainting) stopGrassTool();
-  if(labelPlacing) stopLabelTool();
-  ExtGare.cancelExtensionGareIfActive();
-  if(editingBuildingId) stopEditBuildingShape();
-  drawMode = mode || 'polygon';
-  drawing = true; drawPoints = [];
-  AppState.setDrawing(drawing);
-  clearMarkers();
-  btnDraw.classList.add('active');
-  btnDraw.querySelector('.tool-btn-label').textContent = drawMode==='rect' ? 'Dessin en cours (rectangle)…' : 'Dessin en cours…';
-  drawHintText.textContent = drawMode==='rect'
-    ? 'Cliquez-glissez sur le sol pour tracer le rectangle du bâtiment, Échap annuler, Entrée valider'
-    : 'Cliquez sur le sol pour poser les sommets du bâtiment';
-  drawHintEnter.style.display = drawMode==='rect' ? 'none' : '';
-  drawHint.classList.add('show');
-  enterConstructionMode();
-  lockPlanViewForZoneDraw();
-  showZoneHazardOutline();
-  refreshBldgMiniListVisibility();
-}
-function cancelDraw(){
-  const cancelledVolumeTargetId = volumeDrawTargetId; // mémorisé AVANT réinitialisation, pour rafraîchir la fiche bâtiment si besoin (voir plus bas)
-  drawing = false; drawPoints = []; rectDragging = false; rectStartPt = null;
-  AppState.setDrawing(drawing);
-  currentDrawLiveArea = null; currentDrawLiveCentroid = null;
-  drawAreaLabel.classList.remove('show');
-  clearMarkers();
-  clearTreesOverlapWarning();
-  btnDraw.classList.remove('active');
-  btnDraw.querySelector('.tool-btn-label').textContent = 'Nouveau bâtiment';
-  drawHint.classList.remove('show');
-  drawHintEnter.style.display = '';
-  controls.enabled = true;
-  closeDrawMenu();
-  volumeDrawTargetId = null;
-  hideVolumeRoofGrid();
-  unlockPlanViewAfterVolumeDraw();
-  exitConstructionMode();
-  refreshBldgMiniListVisibility();
-  // Sécurité : si un tracé de volume supérieur est annulé (ou vient d'aboutir,
-  // finishDraw() appelant cancelDraw() avant d'ouvrir la modale d'étages)
-  // alors que la fiche du MÊME bâtiment est ouverte à droite, on la
-  // rafraîchit pour qu'elle cesse d'afficher "✕ Annuler le tracé" — sinon un
-  // clic dessus relance startVolumeDraw() au lieu de ne rien faire, puisque
-  // volumeDrawTargetId est déjà retombé à null (voir bewSelectedForBuildingId,
-  // renderBldgEditWindow ci-dessous).
-  if(cancelledVolumeTargetId!==null && typeof bewSelectedForBuildingId!=='undefined' && bewSelectedForBuildingId===cancelledVolumeTargetId){
-    const b = buildings.find(x=>x.id===cancelledVolumeTargetId);
-    if(b) renderBldgEditWindow(b);
-  }
-}
-function clearMarkers(){
-  unregisterScreenSizedMarkersOf(drawMarkers);
-  drawMarkers.clear();
-  if(previewLine){ worldRoot.remove(previewLine); previewLine.geometry.dispose(); previewLine=null; }
-  if(previewHazard){ worldRoot.remove(previewHazard); previewHazard=null; }
-  hideDrawGuide();
-}
-let previewHazard = null;
-function refreshPreview(){
-  if(previewLine){ worldRoot.remove(previewLine); previewLine.geometry.dispose(); previewLine=null; }
-  if(previewHazard){ worldRoot.remove(previewHazard); previewHazard=null; }
-  if(drawPoints.length<2) return;
-  const pts = drawPoints.map(p=>new THREE.Vector3(p.x,0.15,p.z));
-  pts.push(pts[0].clone());
-  previewLine = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(pts),
-    new THREE.LineBasicMaterial({ color:NEON_BLUE })
-  );
-  worldRoot.add(previewLine);
-  // Bande zébrée noir/jaune type chantier le long du contour en cours de
-  // tracé — visible même grille désactivée, pour bien signaler "en travaux".
-  previewHazard = makeHazardStripeOutline(drawPoints, 0.5);
-  worldRoot.add(previewHazard);
-  // Surface au sol en direct pendant le tracé — dès que le contour a de quoi
-  // former un polygone (3 sommets minimum).
-  if(drawPoints.length>=3){
-    currentDrawLiveArea = polygonAreaXZ(drawPoints);
-    currentDrawLiveCentroid = drawPoints.reduce((s,p)=>({x:s.x+p.x, z:s.z+p.z}), {x:0,z:0});
-    currentDrawLiveCentroid.x /= drawPoints.length; currentDrawLiveCentroid.z /= drawPoints.length;
-  } else {
-    currentDrawLiveArea = null; currentDrawLiveCentroid = null;
-  }
-}
-// Aimantation sur les sommets/arêtes des AUTRES bâtiments déjà posés — utilisé
-// UNIQUEMENT pendant le tracé d'un NOUVEAU bâtiment au sol (pas pour un volume
-// supérieur, qui s'aimante déjà sur le bâtiment support via snapToFootprintEdges).
-// Même logique priorité sommet > bord que snapPointToZone, mais balayée sur
-// tous les bâtiments existants à la fois (le plus proche gagne).
-function snapPointToOtherBuildings(pt, excludeId){
-  let bestVertex = null, bestVertexDist = VERTEX_SNAP_RADIUS;
-  let bestEdge = null, bestEdgeDist = EDGE_SNAP_RADIUS;
-  buildings.forEach(b=>{
-    if(excludeId!=null && b.id===excludeId) return;
-    const poly = b.points;
-    if(!poly || poly.length<2) return;
-    poly.forEach(v=>{
-      const d = Math.hypot(v.x-pt.x, v.z-pt.z);
-      if(d<bestVertexDist){ bestVertexDist=d; bestVertex={x:v.x, z:v.z}; }
-    });
-    for(let i=0;i<poly.length;i++){
-      const a=poly[i], c=poly[(i+1)%poly.length];
-      const proj = closestPointOnSegment(pt,a,c);
-      const d = Math.hypot(proj.x-pt.x, proj.z-pt.z);
-      if(d<bestEdgeDist){ bestEdgeDist=d; bestEdge=proj; }
-    }
-  });
-  return bestVertex || bestEdge || null;
-}
-// Résout la position d'un point posé pendant le tracé d'un NOUVEAU bâtiment :
-// priorité à l'aimantation sur un bâtiment voisin, sinon comportement habituel
-// (sommets/bords de la parcelle constructible, ou simple clamp dedans).
-function resolveNewBuildingPoint(pt){
-  const otherSnap = snapPointToOtherBuildings(pt);
-  if(otherSnap) return buildZone.length>=3 ? clampPointToPolygon(otherSnap, buildZone) : otherSnap;
-  return buildZone.length>=3 ? snapPointToZone(pt, buildZone) : pt;
-}
-function flashStatus(msg, isAlert){
-  statusLine.dataset.orig = statusLine.dataset.orig || statusLine.textContent;
-  statusLine.innerHTML = `<b>${msg}</b>`;
-  statusLine.classList.toggle('is-alert', !!isAlert);
-  clearTimeout(flashStatus._t);
-  flashStatus._t = setTimeout(()=>{ statusLine.textContent = statusLine.dataset.orig; statusLine.classList.remove('is-alert'); }, 1800);
-}
-// Contour de référence pour aimanter les sommets pendant le TRACÉ d'un
-// nouveau volume supérieur (pas pendant l'édition d'un décroché existant,
-// voir editTargetBelowFootprint pour ce cas-là) : le sommet actuel du
-// bâtiment ciblé.
-function volumeDrawBelowFootprint(){
-  if(volumeDrawTargetId===null) return null;
-  const b = buildings.find(x=>x.id===volumeDrawTargetId);
-  return b ? footprintForBand(b, b.bands[b.bands.length-1]) : null;
-}
-function addDrawPoint(pt){
-  // Aimantation directe sur un sommet/bord du polygone si on clique à
-  // proximité — même mécanisme fiable que "Emprise pleine" (copie/projection
-  // exacte des coordonnées, jamais un point "presque" dessus). Pour un volume
-  // supérieur, on aimante sur le contour du volume INFÉRIEUR (pas la zone
-  // d'implantation au sol) — pour que les façades continues restent
-  // parfaitement alignées d'un décroché à l'autre, sans décalage parasite.
-  const belowFootprint = volumeDrawBelowFootprint();
-  const target = belowFootprint ? snapToFootprintEdges(pt, belowFootprint)
-    : ((!volumeDrawTargetId && buildZone.length>=3) ? resolveNewBuildingPoint(pt) : pt);
-  // Étape 2 : hugue IMMÉDIATEMENT le segment reliant le point précédent à
-  // celui-ci contre le bord réel du polygone — pas seulement à la fermeture
-  // du tracé (finishDraw). Ainsi le contour est correct dès la pose, sans
-  // avoir à "valider" pour voir la marge fantôme disparaître. Un volume
-  // supérieur se trace librement sur le toit, sans accrochage au sol.
-  let toInsert;
-  if(!volumeDrawTargetId && buildZone.length>=3 && drawPoints.length>0){
-    const from = drawPoints[drawPoints.length-1];
-    toInsert = repairEdgeAgainstZone(from, target, buildZone, drawPoints);
-  } else {
-    toInsert = [{x:target.x, z:target.z}];
-  }
-  toInsert.forEach(p=>{
-    drawPoints.push({x:p.x, z:p.z});
-    // Rayon unitaire : la taille réelle à l'écran est recalculée chaque
-    // frame par updateScreenSizedMarkers() pour rester constante au zoom.
-    const m = new THREE.Mesh(new THREE.SphereGeometry(1,14,14), new THREE.MeshBasicMaterial({color:0xe0663f}));
-    m.position.set(p.x,0.2,p.z);
-    drawMarkers.add(m);
-    registerScreenSizedMarker(m);
-  });
-  refreshPreview();
-}
-function finishDraw(){
-  if(drawPoints.length<3){ cancelDraw(); return; }
-  // Répare la dernière arête (celle qui referme le contour, du dernier point
-  // posé vers le premier) puis nettoie les doublons/points quasi confondus
-  // qu'un hug répété peut laisser — mais ne réordonne JAMAIS les points : le
-  // contour doit rester exactement dans l'ordre où il a été tracé.
-  // NB : un volume supérieur se dessine sur le toit, hors du polygone
-  // d'implantation au sol — pas de "hug" contre buildZone dans ce cas.
-  let finalPoints = drawPoints.slice();
-  if(!volumeDrawTargetId && buildZone.length>=3 && finalPoints.length>=2){
-    const first = finalPoints[0], last = finalPoints[finalPoints.length-1];
-    const closing = repairEdgeAgainstZone(last, first, buildZone, finalPoints);
-    // le dernier point de "closing" == first ; on ne le rajoute pas (il ferme déjà la boucle)
-    finalPoints = finalPoints.concat(closing.slice(0, -1));
-  }
-  finalPoints = cleanPolygonPoints(finalPoints) || finalPoints;
-  finalPoints = simplifyClosedPolygon(finalPoints) || finalPoints;
-  if(finalPoints.length<3){ cancelDraw(); return; }
-  if(volumeDrawTargetId!==null){
-    const targetBuilding = buildings.find(x=>x.id===volumeDrawTargetId);
-    cancelDraw();
-    if(targetBuilding) askVolumeFloorsThenBuild(targetBuilding, finalPoints);
-    return;
-  }
-  cancelDraw();
-  askFloorsThenBuild(finalPoints);
-}
-
-/* ------------------------------------------------------------
-   Modale "nombre d'étages" affichée juste après le tracé d'un nouveau
-   bâtiment : plus de construction directe à 6 étages par défaut, l'usager
-   choisit le nombre d'étages désiré avant que la construction (animée)
-   ne démarre.
-   ------------------------------------------------------------ */
-const floorsModalOverlay = document.getElementById('floors-modal-overlay');
-const floorsModalInput = document.getElementById('floors-modal-input');
-function askFloorsThenBuild(finalPoints){
-  floorsModalInput.value = 6;
-  floorsModalOverlay.classList.remove('hidden');
-  if(window.lucide) lucide.createIcons();
-  function clampVal(){ return Math.max(1, Math.min(MAX_BUILDING_FLOORS, parseInt(floorsModalInput.value)||6)); }
-  function cleanup(){
-    floorsModalOverlay.classList.add('hidden');
-    document.getElementById('floors-modal-minus').removeEventListener('click', onMinus);
-    document.getElementById('floors-modal-plus').removeEventListener('click', onPlus);
-    document.getElementById('floors-modal-validate').removeEventListener('click', onValidate);
-    document.getElementById('floors-modal-cancel').removeEventListener('click', onCancel);
-  }
-  function onMinus(){ floorsModalInput.value = clampVal()-1<1?1:clampVal()-1; }
-  function onPlus(){ floorsModalInput.value = clampVal()+1>MAX_BUILDING_FLOORS?MAX_BUILDING_FLOORS:clampVal()+1; }
-  function onValidate(){
-    const floors = clampVal();
-    cleanup();
-    const b = createBuilding(finalPoints, { floors, silent:true });
-    // Les arbres plantés sous l'emprise ne sont retirés qu'ICI, une fois la
-    // construction réellement validée par l'utilisateur (voir l'aperçu rouge
-    // pendant le tracé dans updateTreesOverlapPreview).
-    removeTreesUnderFootprint(finalPoints);
-    selectedId = b.id;
-    AppState.setSelectedId(selectedId);
-    renderList();
-    startBuildingConstruction(b);
-  }
-  function onCancel(){ cleanup(); }
-  document.getElementById('floors-modal-minus').addEventListener('click', onMinus);
-  document.getElementById('floors-modal-plus').addEventListener('click', onPlus);
-  document.getElementById('floors-modal-validate').addEventListener('click', onValidate);
-  document.getElementById('floors-modal-cancel').addEventListener('click', onCancel);
-}
-
-/* ------------------------------------------------------------
-   VOLUMES SUPÉRIEURS — tracé d'un "décroché" sur le toit d'un bâtiment
-   existant. Réutilise la machine de tracé polygone/rectangle ci-dessus
-   (drawing/drawPoints/drawMode/finishDraw), simplement redirigée vers le
-   toit via volumeDrawTargetId (voir groundPointFromEvent).
-   ------------------------------------------------------------ */
-function startVolumeDraw(b){
-  if(treePlacing) stopTreeTool();
-  if(grassPainting) stopGrassTool();
-  if(labelPlacing) stopLabelTool();
-  ExtGare.cancelExtensionGareIfActive();
-  if(editingBuildingId) stopEditBuildingShape();
-  volumeDrawTargetId = b.id;
-  volumeDrawRoofY = buildingTotalHeight(b);
-  drawMode = 'polygon';
-  drawing = true; drawPoints = [];
-  AppState.setDrawing(drawing);
-  clearMarkers();
-  showVolumeRoofGrid(b);
-  // Tracé bien plus facile bloqué en vue plan (orthographique, du dessus),
-  // recentrée sur CE bâtiment — sinon la perspective déforme sa silhouette
-  // et fausse le jugement du débord de 30% pendant le tracé.
-  lockPlanViewForVolumeDraw(b);
-  drawHintText.textContent = 'Cliquez sur le toit pour poser les sommets du volume supérieur';
-  drawHintEnter.style.display = '';
-  drawHint.classList.add('show');
-  enterConstructionMode();
-  applyConstructionGrayscale(b.group);
-  refreshBldgMiniListVisibility();
-}
-
-function askVolumeFloorsThenBuild(b, finalPoints){
-  document.querySelector('#floors-modal h3').textContent = "Volume supérieur — nombre d'étages";
-  document.querySelector('#floors-modal p').textContent = "Choisissez le nombre d'étages de ce volume (modifiable ensuite depuis sa fiche).";
-  document.getElementById('floors-modal-validate').textContent = 'Ajouter';
-  floorsModalInput.value = 3;
-  floorsModalOverlay.classList.remove('hidden');
-  if(window.lucide) lucide.createIcons();
-  function clampVal(){ return Math.max(1, Math.min(MAX_BUILDING_FLOORS, parseInt(floorsModalInput.value)||3)); }
-  function restoreModalText(){
-    document.querySelector('#floors-modal h3').textContent = "Nombre d'étages";
-    document.querySelector('#floors-modal p').textContent = "Choisissez le nombre d'étages du bâtiment avant sa construction (modifiable ensuite à tout moment).";
-    document.getElementById('floors-modal-validate').textContent = 'Construire';
-  }
-  function cleanup(){
-    floorsModalOverlay.classList.add('hidden');
-    restoreModalText();
-    document.getElementById('floors-modal-minus').removeEventListener('click', onMinus);
-    document.getElementById('floors-modal-plus').removeEventListener('click', onPlus);
-    document.getElementById('floors-modal-validate').removeEventListener('click', onValidate);
-    document.getElementById('floors-modal-cancel').removeEventListener('click', onCancel);
-  }
-  function onMinus(){ floorsModalInput.value = clampVal()-1<1?1:clampVal()-1; }
-  function onPlus(){ floorsModalInput.value = clampVal()+1>MAX_BUILDING_FLOORS?MAX_BUILDING_FLOORS:clampVal()+1; }
-  function onValidate(){
-    const floors = clampVal();
-    cleanup();
-    addVolumeToBuilding(b, finalPoints, floors);
-  }
-  function onCancel(){ cleanup(); }
-  document.getElementById('floors-modal-minus').addEventListener('click', onMinus);
-  document.getElementById('floors-modal-plus').addEventListener('click', onPlus);
-  document.getElementById('floors-modal-validate').addEventListener('click', onValidate);
-  document.getElementById('floors-modal-cancel').addEventListener('click', onCancel);
-}
-
-function addVolumeToBuilding(b, pts, floors){
-  let cleaned = cleanPolygonPoints(pts) || pts;
-  // La référence du débord, c'est le sommet ACTUEL du bâtiment (la dernière
-  // tranche déjà posée), pas toujours le socle — pour empiler plusieurs
-  // décrochés en escalier, chacun comparé à celui juste en dessous de lui.
-  const belowBand = b.bands[b.bands.length-1];
-  const belowFootprint = footprintForBand(b, belowBand);
-  const before = polygonOutsideAreaRatio(cleaned, belowFootprint);
-  cleaned = shrinkPolygonToFitOverlap(cleaned, belowFootprint, 0.30);
-  if(before > 0.30) flashStatus('Volume ajusté : débord ramené à 30% maximum', true);
-  // Le nombre d'étages de CE volume reste plafonné à 30 (un décroché reste un
-  // décroché, pas un second gratte-ciel), et le TOTAL du bâtiment ne dépasse
-  // jamais MAX_BUILDING_FLOORS non plus (garde-fou de bon sens, voir sa
-  // définition) — sans jamais retomber en dessous de ce qui existe déjà.
-  const extraFloors = Math.max(1, Math.min(30, MAX_BUILDING_FLOORS - b.floors, floors||1));
-  const newFrom = b.floors + 1;
-  b.floors = b.floors + extraFloors;
-  // Nouvelle tranche au sommet, avec SON PROPRE contour (le décroché) — un
-  // seul et même compteur d'étages pour tout le bâtiment, donc surface et
-  // répartition des usages restent automatiquement exactes.
-  b.bands.push({ from:newFrom, to:b.floors, usage: belowBand.usage || DEFAULT_USAGE, points: cleaned, facadeMotif: belowBand.facadeMotif || DEFAULT_MOTIF, facadeTint: belowBand.facadeTint || DEFAULT_FACADE_TINT });
-  normalizeBands(b);
-  rebuildMesh(b);
-  renderList();
-  selectedId = b.id;
-  AppState.setSelectedId(selectedId);
-  openBldgEditWindow(b.id);
-}
-
-// ---------- Grille de repère flottante au-dessus du toit, pendant le tracé
-// d'un volume supérieur — s'estompe progressivement vers les bords (dégradé
-// radial en alpha) pour ne pas trancher visuellement avec la scène. ----------
-let volumeRoofGridMesh = null;
-let volumeRoofOutline = null;
-function makeFadedGridTexture(){
-  const size = 512, c = document.createElement('canvas');
-  c.width = c.height = size;
-  const ctx = c.getContext('2d');
-  ctx.clearRect(0,0,size,size);
-  ctx.strokeStyle = `rgba(${NEON_BLUE_CSS},0.9)`;
-  ctx.lineWidth = 1.5;
-  const step = size/16;
-  for(let i=0;i<=16;i++){
-    const p = i*step;
-    ctx.beginPath(); ctx.moveTo(p,0); ctx.lineTo(p,size); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0,p); ctx.lineTo(size,p); ctx.stroke();
-  }
-  // Fondu radial vers les bords : on applique un masque alpha (destination-in)
-  // avec un dégradé plein au centre, transparent sur les bords.
-  ctx.globalCompositeOperation = 'destination-in';
-  const grad = ctx.createRadialGradient(size/2,size/2,0, size/2,size/2,size/2);
-  grad.addColorStop(0, 'rgba(255,255,255,1)');
-  grad.addColorStop(0.6, 'rgba(255,255,255,0.85)');
-  grad.addColorStop(1, 'rgba(255,255,255,0)');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0,0,size,size);
-  ctx.globalCompositeOperation = 'source-over';
-  const tex = new THREE.CanvasTexture(c);
-  tex.needsUpdate = true;
-  return tex;
-}
-function showVolumeRoofGrid(b){
-  hideVolumeRoofGrid();
-  // Repère sur le sommet ACTUEL du bâtiment (dernière tranche déjà posée) —
-  // c'est cette emprise-là qui sert de référence pour la règle des 30%.
-  const footprint = footprintForBand(b, b.bands[b.bands.length-1]);
-  const xs = footprint.map(p=>p.x), zs = footprint.map(p=>p.z);
-  const w = Math.max(...xs)-Math.min(...xs), d = Math.max(...zs)-Math.min(...zs);
-  const cx = (Math.max(...xs)+Math.min(...xs))/2, cz = (Math.max(...zs)+Math.min(...zs))/2;
-  const span = Math.max(w,d) * 1.6 + 6; // marge au-delà de l'emprise pour bien voir où on peut déborder
-  const roofY = buildingTotalHeight(b);
-  const geo = new THREE.PlaneGeometry(span, span);
-  const mat = new THREE.MeshBasicMaterial({
-    map: makeFadedGridTexture(), transparent:true, depthWrite:false,
-    side:THREE.DoubleSide
-  });
-  volumeRoofGridMesh = new THREE.Mesh(geo, mat);
-  volumeRoofGridMesh.rotation.x = -Math.PI/2;
-  volumeRoofGridMesh.position.set(cx, roofY+0.05, cz);
-  volumeRoofGridMesh.renderOrder = 2;
-  worldRoot.add(volumeRoofGridMesh);
-  // Contour du toit actuel (référence des 30% de débord max), bien visible.
-  const outlinePts = footprint.map(p=>new THREE.Vector3(p.x, roofY+0.08, p.z));
-  outlinePts.push(outlinePts[0].clone());
-  volumeRoofOutline = new THREE.Line(
-    new THREE.BufferGeometry().setFromPoints(outlinePts),
-    new THREE.LineBasicMaterial({ color:NEON_BLUE, transparent:true, opacity:0.9, depthTest:false })
-  );
-  volumeRoofOutline.renderOrder = 3;
-  worldRoot.add(volumeRoofOutline);
-}
-function hideVolumeRoofGrid(){
-  if(volumeRoofOutline){ worldRoot.remove(volumeRoofOutline); volumeRoofOutline.geometry.dispose(); volumeRoofOutline.material.dispose(); volumeRoofOutline=null; }
-  if(!volumeRoofGridMesh) return;
-  worldRoot.remove(volumeRoofGridMesh);
-  volumeRoofGridMesh.geometry.dispose();
-  volumeRoofGridMesh.material.map.dispose();
-  volumeRoofGridMesh.material.dispose();
-  volumeRoofGridMesh = null;
-}
-
-btnDraw.addEventListener('click', ()=>{
-  if(drawing){ cancelDraw(); return; }
-  if(!drawMenuOpen){
-    if(treePlacing) stopTreeTool();
-    if(grassPainting) stopGrassTool();
-    if(labelPlacing) stopLabelTool();
-    ExtGare.cancelExtensionGareIfActive();
-  }
-  drawMenuOpen ? closeDrawMenu() : openDrawMenu();
-});
-btnModePoly.addEventListener('click', ()=>{ closeDrawMenu(); startDraw('polygon'); });
-btnModeRect.addEventListener('click', ()=>{ closeDrawMenu(); startDraw('rect'); });
-
-renderer.domElement.addEventListener('click', (ev)=>{
-  if(!drawing || drawMode!=='polygon') return;
-  const pt = groundPointFromEvent(ev);
-  if(pt) addDrawPoint(pt);
-});
-window.addEventListener('keydown', (ev)=>{
-  if(!drawing) return;
-  if(ev.key==='Enter' && drawMode==='polygon') finishDraw();
-  if(ev.key==='Escape') cancelDraw();
-});
-// Tente de valider un déplacement/pivot en cours : refuse (message d'erreur)
-// si le bâtiment dépasse encore le polygone d'implantation. Utilisé par le
-// bouton VALIDER du bandeau ET le bouton "Terminer" du panneau bâtiment.
-function tryValidateMove(){
-  const b = buildings.find(x=>x.id===movingBuildingId);
-  if(b && buildingExceedsZone(b)){
-    flashStatus('Hors du polygone d\'implantation — ramenez le bâtiment dans la parcelle avant de valider', true);
-    return false;
-  }
-  // Comme pour un nouveau tracé (voir point 4) : les arbres sous l'emprise
-  // ne sont retirés qu'à la validation effective du déplacement, pas avant.
-  if(b) removeTreesUnderFootprint(b.points);
-  stopMoveBuilding();
-  return true;
-}
-document.getElementById('btn-construction-validate').addEventListener('click', ()=>{
-  if(movingBuildingId){ tryValidateMove(); return; }
-  if(!drawing) return;
-  if(drawMode==='polygon') finishDraw(); // le rectangle se valide déjà tout seul au relâchement de la souris
-});
-document.getElementById('btn-construction-cancel').addEventListener('click', ()=>{
-  if(movingBuildingId){ cancelMoveBuilding(); return; }
-  if(drawing) cancelDraw();
-});
-
-// ---- Mode rectangle : cliquer-glisser-lâcher trace un rectangle au sol,
-// contraint au polygone d'implantation via le même pipeline (finishDraw) que
-// le mode polygone — aucune duplication de la logique de réparation de bord.
-renderer.domElement.addEventListener('pointerdown', (ev)=>{
-  if(!drawing || drawMode!=='rect' || ev.button!==0) return;
-  const pt = groundPointFromEvent(ev);
-  if(!pt) return;
-  const belowFootprint = volumeDrawBelowFootprint();
-  const start = belowFootprint ? snapToFootprintEdges(pt, belowFootprint)
-    : ((!volumeDrawTargetId && buildZone.length>=3) ? resolveNewBuildingPoint(pt) : pt);
-  rectDragging = true;
-  rectStartPt = {x:start.x, z:start.z};
-  drawPoints = [{x:rectStartPt.x, z:rectStartPt.z}];
-  refreshPreview();
-});
-renderer.domElement.addEventListener('pointermove', (ev)=>{
-  if(!drawing || drawMode!=='rect' || !rectDragging) return;
-  const pt = groundPointFromEvent(ev);
-  if(!pt) return;
-  const belowFootprint = volumeDrawBelowFootprint();
-  const snapped = belowFootprint ? snapToFootprintEdges(pt, belowFootprint)
-    : (!volumeDrawTargetId ? resolveNewBuildingPoint(pt) : pt);
-  const x0=rectStartPt.x, z0=rectStartPt.z, x1=snapped.x, z1=snapped.z;
-  drawPoints = [ {x:x0,z:z0}, {x:x1,z:z0}, {x:x1,z:z1}, {x:x0,z:z1} ];
-  refreshPreview();
-});
-window.addEventListener('pointerup', ()=>{
-  if(!drawing || drawMode!=='rect' || !rectDragging) return;
-  rectDragging = false;
-  const tooSmall = drawPoints.length<4 ||
-    (Math.hypot(drawPoints[0].x-drawPoints[2].x, drawPoints[0].z-drawPoints[2].z) < 1);
-  if(tooSmall){ drawPoints = []; clearMarkers(); return; }
-  finishDraw();
+DrawTool.initDrawTool({
+  stopEditBuildingShape, enterConstructionMode, exitConstructionMode,
+  lockPlanViewForZoneDraw, unlockPlanViewAfterVolumeDraw, lockPlanViewForVolumeDraw,
+  showZoneHazardOutline, hideDrawGuide, groundPointFromEvent,
+  renderList,
+  getBewSelectedForBuildingId: () => bewSelectedForBuildingId,
+  renderBldgEditWindow,
+  createBuilding, startBuildingConstruction, normalizeBands, rebuildMesh,
+  openBldgEditWindow, applyConstructionGrayscale,
+  getMovingBuildingId: () => movingBuildingId,
+  buildingExceedsZone, stopMoveBuilding, cancelMoveBuilding,
+  makeHazardStripeOutline,
+  getMaxBuildingFloors: () => MAX_BUILDING_FLOORS,
+  getDefaultMotif: () => DEFAULT_MOTIF,
+  getDefaultFacadeTint: () => DEFAULT_FACADE_TINT,
+  registerScreenSizedMarker, unregisterScreenSizedMarkersOf,
+  setSelectedId: (id) => { selectedId = id; AppState.setSelectedId(id); },
 });
 
 /* ============================================================
@@ -3571,722 +3052,26 @@ function forceDoubleSided(root){
 }
 
 /* ============================================================
-   ARBRES — plantation contrainte au polygone d'implantation
-   ============================================================
-   Le gabarit visuel est cloné du premier objet "Icosphère*" trouvé
-   dans la maquette chargée (repli sur un icosaèdre généré si absent,
-   ex. en mode démo). Un clic dans le polygone plante un arbre ; un
-   clic sur un arbre existant le retire.
+   ARBRES — module externalisé (src/trees.js).
    ============================================================ */
-let treeTemplate = null; // {object: THREE.Group, baseScale}
-function findIcosphereTemplate(){
-  // IMPORTANT : quand un objet Blender a plusieurs matériaux (ex. tronc + feuillage),
-  // l'export glTF le scinde en PLUSIEURS primitives, et THREE.GLTFLoader charge ça
-  // comme un Group (le noeud "Icosphère.NNN") contenant DEUX Mesh enfants — pas un
-  // seul Mesh multi-matériaux. En cherchant uniquement `o.isMesh`, on ne récupérait
-  // que le premier enfant rencontré (le tronc), d'où le feuillage manquant : ce
-  // n'était pas un problème de matériau cassé, mais un sous-arbre entier ignoré.
-  // On cherche donc le premier noeud (Mesh OU Group) dont le nom matche, et on
-  // clone TOUT son sous-arbre.
-  let found = null;
-  siteRoot.traverse(o=>{ if(!found && /icosph/i.test(o.name||'')) found = o; });
-  if(found){
-    const inner = found.clone(true); // clone profond (tronc + feuillage), géométrie/matériaux partagés par référence
-    inner.position.set(0,0,0);
-    inner.rotation.set(0,0,0);
-    inner.scale.set(1,1,1);
-    // (treesGroup vit maintenant sous worldRoot, comme la maquette : plus besoin
-    // de recorriger manuellement l'axe ici, la rotation Z-up→Y-up est héritée
-    // automatiquement via la hiérarchie.)
-    inner.updateMatrixWorld(true);
-    // Recentre sur sa propre base locale (X/Z centrés, Y=0 au point le plus bas) :
-    // indispensable si l'export a "appliqué" la position mondiale dans les sommets.
-    const bb = new THREE.Box3().setFromObject(inner);
-    const cx = (bb.min.x+bb.max.x)/2, cz = (bb.min.z+bb.max.z)/2, baseY = bb.min.y;
-    inner.position.set(-cx, -baseY, -cz);
-    const wrapper = new THREE.Group();
-    wrapper.add(inner);
-    const worldScale = found.getWorldScale(new THREE.Vector3());
-    treeTemplate = { object: wrapper, baseScale: worldScale };
-  } else {
-    const mesh = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(1.4, 0),
-      new THREE.MeshStandardMaterial({ color:0x4a7c4e, roughness:0.85, flatShading:true })
-    );
-    mesh.position.y = 1.4;
-    const wrapper = new THREE.Group(); wrapper.add(mesh);
-    treeTemplate = { object: wrapper, baseScale: new THREE.Vector3(1,1,1) };
-  }
-}
-
-let trees = [];
-let treeIdCounter = 1;
-let treesGroup = new THREE.Group(); worldRoot.add(treesGroup);
-AppState.setTreesGroup(treesGroup);
-let treesVisibleFlag = true; // oeil "Arbre"
-let treePlacing = false;
-AppState.setTreePlacing(treePlacing);
-const btnTree = document.getElementById('btn-tree');
-
-/* ============================================================
-   Boules "sphère" aux coins convexes du toit des nouveaux bâtiments
-   ------------------------------------------------------------
-   Gabarit cloné du premier objet nommé "sphère"/"sphere" trouvé dans la
-   maquette (distinct de l'"Icosphère" utilisé pour les arbres) ; posé à
-   30cm au-dessus de chaque sommet du toit dont l'angle intérieur est
-   inférieur à 180° (coin convexe/saillant) — les coins rentrants (>180°,
-   typiques d'une forme en L ou en U) n'en reçoivent pas.
-   ============================================================ */
-let roofSphereTemplate = null;
-function findRoofSphereTemplate(){
-  let found = null;
-  siteRoot.traverse(o=>{ if(!found && /(^|[^o])sph[eè]re/i.test(o.name||'') && !/icosph/i.test(o.name||'')) found = o; });
-  if(found){
-    const inner = found.clone(true);
-    inner.position.set(0,0,0); inner.rotation.set(0,0,0); inner.scale.set(1,1,1);
-    inner.updateMatrixWorld(true);
-    const bb = new THREE.Box3().setFromObject(inner);
-    const cx = (bb.min.x+bb.max.x)/2, cy=(bb.min.y+bb.max.y)/2, cz = (bb.min.z+bb.max.z)/2;
-    inner.position.set(-cx, -cy, -cz); // centrée sur son propre centre
-    const wrapper = new THREE.Group();
-    wrapper.add(inner);
-    roofSphereTemplate = wrapper;
-  } else {
-    // Repli si le .glb ne contient pas d'objet "sphère" (ex. mode démo)
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.5, 16, 16),
-      new THREE.MeshStandardMaterial({ color:0xd8d8d8, roughness:0.4, metalness:0.1 })
-    );
-    const wrapper = new THREE.Group(); wrapper.add(mesh);
-    roofSphereTemplate = wrapper;
-  }
-}
-// Indices des sommets convexes (angle intérieur < 180°) d'un polygone fermé,
-// indépendamment de son sens de parcours (CW/CCW).
-function convexCornerIndices(pts){
-  const n = pts.length;
-  if(n<3) return [];
-  const signedArea = (()=>{ let a=0; for(let i=0;i<n;i++){ const p1=pts[i],p2=pts[(i+1)%n]; a+=p1.x*p2.z-p2.x*p1.z; } return a; })();
-  const ccw = signedArea >= 0;
-  const out = [];
-  for(let i=0;i<n;i++){
-    const prev = pts[(i-1+n)%n], cur = pts[i], next = pts[(i+1)%n];
-    const e1 = {x:cur.x-prev.x, z:cur.z-prev.z};
-    const e2 = {x:next.x-cur.x, z:next.z-cur.z};
-    const cross = e1.x*e2.z - e1.z*e2.x;
-    const isConvex = ccw ? (cross >= 0) : (cross <= 0);
-    if(isConvex) out.push(i);
-  }
-  return out;
-}
-function buildRoofCornerSpheres(points, topY){
-  if(!roofSphereTemplate) findRoofSphereTemplate();
-  const group = new THREE.Group();
-  const idx = convexCornerIndices(points);
-  idx.forEach(i=>{
-    const p = points[i];
-    const s = roofSphereTemplate.clone(true);
-    s.position.set(p.x, topY + 0.3, p.z);
-    group.add(s);
-  });
-  return group;
-}
-
-function startTreeTool(){
-  if(drawing) cancelDraw();
-  if(drawMenuOpen) closeDrawMenu();
-  if(grassPainting) stopGrassTool();
-  if(labelPlacing) stopLabelTool();
-  ExtGare.cancelExtensionGareIfActive();
-  if(editingBuildingId) stopEditBuildingShape();
-  treePlacing = true;
-  AppState.setTreePlacing(treePlacing);
-  btnTree.classList.add('active'); btnTree.querySelector('.tool-btn-label').textContent = 'Cliquez le polygone…';
-  drawHint.classList.add('show');
-  drawHintText.textContent = "Cliquez dans le polygone d'implantation pour planter un arbre · recliquez un arbre pour le retirer (Échap pour arrêter)";
-  drawHintEnter.style.display = 'none';
-  controls.enabled = false;
-  document.getElementById('tree-mini-list').classList.add('show');
-}
-function stopTreeTool(){
-  treePlacing = false;
-  AppState.setTreePlacing(treePlacing);
-  btnTree.classList.remove('active'); btnTree.querySelector('.tool-btn-label').textContent = 'Arbre';
-  drawHint.classList.remove('show');
-  controls.enabled = true;
-  if(treeDeleteHalo) treeDeleteHalo.visible = false;
-  if(treePlantHalo) treePlantHalo.visible = false;
-  if(treePreviewObj) treePreviewObj.visible = false;
-  treeHoverId = null;
-  renderer.domElement.style.cursor = '';
-  document.getElementById('tree-mini-list').classList.remove('show');
-}
-btnTree.addEventListener('click', ()=> treePlacing ? stopTreeTool() : startTreeTool());
-window.addEventListener('keydown', (ev)=>{
-  if(!treePlacing) return;
-  if(ev.key==='Escape') stopTreeTool();
-});
-
-function addTree(pt){
-  if(!treeTemplate) findIcosphereTemplate();
-  const obj = treeTemplate.object.clone(true);
-  obj.position.set(pt.x, pt.y||0, pt.z);
-  obj.rotation.y = Math.random()*Math.PI*2;
-  const variance = 0.85 + Math.random()*0.3;
-  obj.scale.copy(treeTemplate.baseScale).multiplyScalar(variance);
-  obj.traverse(o=>{
-    if(o.isMesh){
-      o.castShadow=true; o.receiveShadow=true;
-      // clone(true) ne clone PAS les matériaux (partagés par référence avec
-      // le template et donc entre tous les arbres) : on les clone ici pour
-      // que chaque arbre ait son propre matériau, modifiable individuellement
-      // (ex. teinte d'avertissement rouge, voir setTreesOverlapWarning) sans
-      // jamais affecter les autres arbres de la maquette.
-      o.material = Array.isArray(o.material) ? o.material.map(m=>m.clone()) : o.material.clone();
-    }
-  });
-  treesGroup.add(obj);
-  trees.push({ id: treeIdCounter++, mesh: obj, x:pt.x, z:pt.z });
-  renderTreeCount();
-  updateSiteStats();
-}
-function removeTree(id){
-  const t = trees.find(x=>x.id===id);
-  if(!t) return;
-  treesGroup.remove(t.mesh);
-  trees = trees.filter(x=>x.id!==id);
-  renderTreeCount();
-  updateSiteStats();
-}
-function clearAllTrees(){
-  trees.forEach(t=> treesGroup.remove(t.mesh));
-  trees = [];
-  renderTreeCount();
-  updateSiteStats();
-}
-// ------------------------------------------------------------
-// Conflit arbres / nouveau bâtiment : pendant le tracé d'une emprise au sol
-// (pas un décroché en toiture, pas un volume supérieur — les arbres ne
-// vivent qu'au sol), les arbres plantés qui tombent SOUS le contour en
-// cours de tracé sont teintés en rouge (avertissement visuel), puis
-// réellement supprimés seulement si la construction est validée.
-// ------------------------------------------------------------
-const TREE_OVERLAP_WARN_COLOR = 0xff2d2d;
-let _treesOverlapWarnedIds = new Set();
-function setTreesOverlapWarning(warnedIds){
-  trees.forEach(t=>{
-    const shouldWarn = warnedIds.has(t.id);
-    const wasWarned = _treesOverlapWarnedIds.has(t.id);
-    if(shouldWarn === wasWarned) return;
-    t.mesh.traverse(o=>{
-      if(!o.isMesh || !o.material) return;
-      const mats = Array.isArray(o.material) ? o.material : [o.material];
-      mats.forEach(m=>{
-        if(!m || !m.color) return;
-        if(shouldWarn){
-          if(!m.userData._treeOverlapOrig) m.userData._treeOverlapOrig = m.color.clone();
-          m.color.setHex(TREE_OVERLAP_WARN_COLOR);
-        } else if(m.userData._treeOverlapOrig){
-          m.color.copy(m.userData._treeOverlapOrig);
-          delete m.userData._treeOverlapOrig;
-        }
-      });
-    });
-  });
-  _treesOverlapWarnedIds = new Set(warnedIds);
-}
-function clearTreesOverlapWarning(){ setTreesOverlapWarning(new Set()); }
-// Renvoie le contour "actuel" du tracé en cours (polygone en cours de pose,
-// ou rectangle en cours de glissement), avec le point sous le curseur en
-// bonus pour un avertissement bien réactif — utilisé UNIQUEMENT pour la
-// prévisualisation live, jamais pour le contour final réel.
-function currentDrawPreviewPolygon(livePt){
-  if(drawMode==='rect'){
-    if(!rectDragging || !rectStartPt || !livePt) return null;
-    const a=rectStartPt, b=livePt;
-    return [{x:a.x,z:a.z},{x:b.x,z:a.z},{x:b.x,z:b.z},{x:a.x,z:b.z}];
-  }
-  const pts = drawPoints.slice();
-  if(livePt) pts.push({x:livePt.x, z:livePt.z});
-  return pts.length>=3 ? pts : null;
-}
-function updateTreesOverlapPreview(livePt){
-  // Seule une emprise AU SOL (nouveau bâtiment) peut recouvrir des arbres —
-  // un décroché en toiture ou un volume supérieur est en l'air.
-  if(!drawing || volumeDrawTargetId!==null){ clearTreesOverlapWarning(); return; }
-  const poly = currentDrawPreviewPolygon(livePt);
-  updateTreesOverlapWarningForPolygon(poly);
-}
-// Version générique (pas seulement pour le tracé) : teinte les arbres sous
-// un polygone donné — utilisée aussi pour le déplacement et la modification
-// de forme (socle) d'un bâtiment déjà construit (voir startMoveBuilding /
-// l'édition de forme au sol), pas seulement pour le tracé d'un nouveau.
-function updateTreesOverlapWarningForPolygon(poly){
-  if(!poly || poly.length<3){ clearTreesOverlapWarning(); return; }
-  const warned = new Set();
-  trees.forEach(t=>{ if(pointInPolygon({x:t.x, z:t.z}, poly, 0)) warned.add(t.id); });
-  setTreesOverlapWarning(warned);
-}
-// Supprime pour de bon les arbres tombant sous l'emprise FINALE d'un
-// nouveau bâtiment, au moment où sa construction est validée (pas avant).
-function removeTreesUnderFootprint(finalPoints){
-  if(!finalPoints || finalPoints.length<3) return;
-  const toRemove = trees.filter(t=> pointInPolygon({x:t.x, z:t.z}, finalPoints, 0)).map(t=>t.id);
-  if(!toRemove.length) return;
-  toRemove.forEach(id=> removeTree(id));
-}
-function renderTreeCount(){
-  document.getElementById('tree-count').textContent = trees.length ? `(${trees.length})` : '';
-  document.getElementById('tree-empty-note').style.display = trees.length ? 'none' : 'block';
-  document.getElementById('btn-clear-trees').style.display = trees.length ? 'block' : 'none';
-}
-document.getElementById('btn-clear-trees').addEventListener('click', clearAllTrees);
-
-renderer.domElement.addEventListener('click', (ev)=>{
-  if(!treePlacing) return;
-  const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((ev.clientX-rect.left)/rect.width)*2-1;
-  pointer.y = -((ev.clientY-rect.top)/rect.height)*2+1;
-  raycaster.setFromCamera(pointer, camera);
-
-  // clic sur un arbre existant : on le retire (recursive:true, car chaque arbre
-  // est maintenant un groupe tronc+feuillage, pas un mesh unique — il faut
-  // remonter jusqu'au groupe racine référencé dans trees[].mesh)
-  const treeHit = raycaster.intersectObjects(trees.map(t=>t.mesh), true)[0];
-  if(treeHit){
-    let obj = treeHit.object;
-    while(obj && !trees.some(t=>t.mesh===obj)) obj = obj.parent;
-    const hitTree = trees.find(t=>t.mesh===obj);
-    if(hitTree){ removeTree(hitTree.id); return; }
-  }
-
-  const hit = treeGroundHit(raycaster);
-  if(!hit){ flashStatus("Cliquez dans le polygone d'implantation", true); return; }
-  if(buildZone.length>=3 && !pointInPolygon({x:hit.point.x, z:hit.point.z}, buildZone)){
-    flashStatus("Les arbres ne peuvent être plantés que dans le polygone d'implantation", true);
-    return;
-  }
-  addTree(hit.point);
-});
-
-// Le polygone d'implantation représente la vraie surface de la place (plaza
-// vide sans maillage de "quartier" dessus) : il DOIT faire partie des cibles
-// de raycast, sinon un clic/survol dans une zone ouverte ne touche rien et
-// retombe sur le plan de secours à Y=0, qui peut être à des dizaines de
-// mètres du vrai niveau du sol une fois la maquette mise à l'échelle/translatée.
-function treeGroundHit(rc){
-  const groundTargets = [];
-  groundTargets.push(...grassParts.map(g=>g.mesh));
-  if(quartierGroup) quartierGroup.traverse(o=>{ if(o.isMesh) groundTargets.push(o); });
-  if(hallMesh) hallMesh.traverse(o=>{ if(o.isMesh) groundTargets.push(o); });
-  groundTargets.push(ground);
-  return rc.intersectObjects(groundTargets, true)[0] || null;
-}
-// Raycast sur les mêmes cibles que treeGroundHit (surfaces réelles de la
-// maquette : gazon, quartier, hall, sol) à partir d'un événement souris —
-// réutilisé par la pose de labels pour obtenir un point au sol fidèle à ce
-// qui est visuellement cliqué, y compris caméra inclinée (contrairement au
-// simple plan invisible utilisé par groundPointFromEvent).
-function siteGroundHitFromEvent(ev){
-  const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((ev.clientX-rect.left)/rect.width)*2-1;
-  pointer.y = -((ev.clientY-rect.top)/rect.height)*2+1;
-  raycaster.setFromCamera(pointer, camera);
-  const hit = treeGroundHit(raycaster);
-  return hit ? hit.point : null;
-}
-
-// Survol en mode "Arbre" :
-// - au-dessus d'un arbre existant, le clic va le SUPPRIMER → halo rouge dessus.
-// - au-dessus d'un emplacement plantable, le clic va CRÉER un arbre → halo
-//   bleu au sol + un aperçu semi-transparent du modèle d'arbre qui suit la
-//   souris, pour visualiser l'emplacement/l'échelle avant de valider.
-// Les arbres clonés partagent leurs matériaux (clone(true) ne clone pas les
-// matériaux) : on ne modifie donc jamais les matériaux existants, on pose des
-// halos/aperçus à part.
-const TREE_DELETE_COLOR = '255,64,64';
-const TREE_PLANT_COLOR = NEON_BLUE_CSS;
-let treeDeleteHalo = null, treePlantHalo = null, treePreviewObj = null;
-let treeHoverId = null;
-// NB : depthWrite:false + depthTest:false sur ces halos (via makeCircleDecal)
-// veut dire qu'ils ne sont jamais bloqués par la profondeur — l'ordre visuel
-// entre "objets qui dessinent par-dessus" dépend alors uniquement de
-// renderOrder (dessiné en dernier = visible par-dessus). L'overlay de gazon
-// peint (voir setupGrassPaintOverlay) a renderOrder=1 ; sans renderOrder
-// explicite ici (défaut 0), le gazon — peint après — recouvrait le halo/
-// aperçu de l'arbre-guide dès qu'on survolait une zone déjà peinte. On les
-// place donc au-dessus de tout ce qui peut être peint au sol.
-const TREE_GUIDE_RENDER_ORDER = 5;
-function ensureTreeDeleteHalo(){
-  if(treeDeleteHalo) return treeDeleteHalo;
-  treeDeleteHalo = new THREE.Group();
-  const disc = makeCircleDecal(1.8, TREE_DELETE_COLOR, 'fill');
-  disc.position.y = 0.05;
-  disc.renderOrder = TREE_GUIDE_RENDER_ORDER;
-  const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(1.6, 16, 16),
-    new THREE.MeshBasicMaterial({ color:0xff4040, transparent:true, opacity:0.28, depthWrite:false })
-  );
-  sphere.renderOrder = TREE_GUIDE_RENDER_ORDER;
-  treeDeleteHalo.add(disc, sphere);
-  treeDeleteHalo.visible = false;
-  worldRoot.add(treeDeleteHalo);
-  return treeDeleteHalo;
-}
-function ensureTreePlantHalo(){
-  if(treePlantHalo) return treePlantHalo;
-  treePlantHalo = makeCircleDecal(1.8, TREE_PLANT_COLOR, 'fill');
-  treePlantHalo.position.y = 0.05;
-  treePlantHalo.renderOrder = TREE_GUIDE_RENDER_ORDER;
-  treePlantHalo.visible = false;
-  worldRoot.add(treePlantHalo);
-  return treePlantHalo;
-}
-function ensureTreePreviewObj(){
-  if(treePreviewObj) return treePreviewObj;
-  if(!treeTemplate) findIcosphereTemplate();
-  treePreviewObj = treeTemplate.object.clone(true);
-  treePreviewObj.scale.copy(treeTemplate.baseScale);
-  treePreviewObj.traverse(o=>{
-    if(o.isMesh && o.material){
-      // Chaque aperçu a son propre matériau (clone) pour ne jamais teinter
-      // les vrais arbres déjà plantés, qui partagent les matériaux du gabarit.
-      o.material = o.material.clone();
-      o.material.transparent = true;
-      o.material.opacity = 0.55;
-      o.material.depthWrite = false;
-    }
-    if(o.isMesh) o.renderOrder = TREE_GUIDE_RENDER_ORDER;
-  });
-  treePreviewObj.visible = false;
-  worldRoot.add(treePreviewObj);
-  return treePreviewObj;
-}
-renderer.domElement.addEventListener('pointermove', (ev)=>{
-  if(!treePlacing) return;
-  ensureTreeDeleteHalo(); ensureTreePlantHalo(); ensureTreePreviewObj();
-  const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((ev.clientX-rect.left)/rect.width)*2-1;
-  pointer.y = -((ev.clientY-rect.top)/rect.height)*2+1;
-  raycaster.setFromCamera(pointer, camera);
-  const hit = raycaster.intersectObjects(trees.map(t=>t.mesh), true)[0];
-  if(hit){
-    let obj = hit.object;
-    while(obj && !trees.some(t=>t.mesh===obj)) obj = obj.parent;
-    const t = trees.find(x=>x.mesh===obj);
-    if(t){
-      treeHoverId = t.id;
-      treeDeleteHalo.visible = true;
-      treeDeleteHalo.position.set(t.x, 0, t.z);
-      treePlantHalo.visible = false;
-      treePreviewObj.visible = false;
-      renderer.domElement.style.cursor = 'pointer';
-      return;
-    }
-  }
-  treeHoverId = null;
-  treeDeleteHalo.visible = false;
-  // Emplacement plantable : halo bleu + aperçu du modèle d'arbre en 3D.
-  const groundHit = treeGroundHit(raycaster);
-  const valid = groundHit && (buildZone.length<3 || pointInPolygon({x:groundHit.point.x, z:groundHit.point.z}, buildZone));
-  if(valid){
-    treePlantHalo.visible = true;
-    treePlantHalo.position.set(groundHit.point.x, (groundHit.point.y||0)+0.05, groundHit.point.z);
-    treePreviewObj.visible = true;
-    treePreviewObj.position.set(groundHit.point.x, groundHit.point.y||0, groundHit.point.z);
-    renderer.domElement.style.cursor = 'copy';
-  } else {
-    treePlantHalo.visible = false;
-    treePreviewObj.visible = false;
-    renderer.domElement.style.cursor = '';
-  }
+Trees.initTrees({
+  cancelDraw: DrawTool.cancelDraw, closeDrawMenu: DrawTool.closeDrawMenu, stopGrassTool: Grass.stopGrassTool, stopLabelTool: Labels.stopLabelTool, stopEditBuildingShape,
+  flashStatus: DrawTool.flashStatus, updateSiteStats, makeCircleDecal,
+  getGrassParts: () => Grass.grassParts,
+  getDrawMode: () => DrawTool.drawMode,
+  getRectDragging: () => DrawTool.rectDragging,
+  getRectStartPt: () => DrawTool.rectStartPt,
+  getDrawPoints: () => DrawTool.drawPoints,
+  getVolumeDrawTargetId: () => DrawTool.volumeDrawTargetId,
 });
 
 /* ============================================================
-   GAZON — peinture au sol sur le polygone d'implantation
-   ============================================================
-   Pas besoin de subdiviser le mesh Blender en petites faces : on peint dans
-   une texture (canvas 2D) posée en surcouche sur le polygone, à l'endroit où
-   le rayon de la souris touche le mesh — le point d'impact donne directement
-   ses coordonnées UV (Raycaster les fournit automatiquement si le mesh a un
-   attribut UV, ce qui est le cas ici). La résolution du pinceau est donc
-   limitée par la résolution de la texture, pas par le nombre de faces.
+   GAZON — module externalisé (src/grass.js).
    ============================================================ */
-let grassParts = []; // [{mesh, overlayMesh, canvas, ctx, texture}]
-let grassVisibleFlag = true; // oeil "Gazon"
-let grassBrushRadius = 12; // px, sur un canvas de 1024 — "moyen" par défaut (réduit à nouveau : la tache peinte réelle restait bien plus grande que ce que son cercle-guide au sol laissait penser)
-
-// Aire exacte (m², repère monde) d'une géométrie de mesh : somme des aires de
-// triangles après application de sa matrice monde — fiable quelle que soit
-// l'échelle/rotation héritée de la chaîne de parents, contrairement à une
-// simple bounding box.
-function computeMeshWorldArea(mesh){
-  const geo = mesh.geometry;
-  const pos = geo.attributes && geo.attributes.position;
-  if(!pos) return 0;
-  mesh.updateWorldMatrix(true, false);
-  const m = mesh.matrixWorld;
-  const idx = geo.index;
-  const triCount = idx ? Math.floor(idx.count/3) : Math.floor(pos.count/3);
-  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
-  let area = 0;
-  for(let i=0;i<triCount;i++){
-    let ia, ib, ic;
-    if(idx){ ia=idx.getX(i*3); ib=idx.getX(i*3+1); ic=idx.getX(i*3+2); }
-    else { ia=i*3; ib=i*3+1; ic=i*3+2; }
-    a.fromBufferAttribute(pos, ia).applyMatrix4(m);
-    b.fromBufferAttribute(pos, ib).applyMatrix4(m);
-    c.fromBufferAttribute(pos, ic).applyMatrix4(m);
-    area += new THREE.Triangle(a,b,c).getArea();
-  }
-  return area;
-}
-function setupGrassPaintOverlay(parts){
-  grassParts = [];
-  parts.forEach(mesh=>{
-    const size = 1024;
-    const canvas = document.createElement('canvas');
-    canvas.width = size; canvas.height = size;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true }); // computeGrassAreaM2() relit ce canvas régulièrement via getImageData
-    ctx.clearRect(0,0,size,size); // rien de peint au départ : transparent partout
-    const texture = new THREE.CanvasTexture(canvas);
-    const mat = new THREE.MeshStandardMaterial({
-      map: texture, transparent:true, roughness:0.9, metalness:0,
-      depthWrite:false, polygonOffset:true, polygonOffsetFactor:-1, polygonOffsetUnits:-1
-    });
-    // Même géométrie que la pièce du polygone (mêmes UV) posée juste au-dessus,
-    // en enfant direct : hérite automatiquement de sa position/échelle/rotation.
-    const overlayMesh = new THREE.Mesh(mesh.geometry, mat);
-    overlayMesh.visible = grassVisibleFlag;
-    overlayMesh.position.y = 0.02;
-    overlayMesh.renderOrder = 1;
-    mesh.add(overlayMesh);
-    // Étendue RÉELLE (en unités monde) couverte par ce fragment de sol — le
-    // canvas 1024×1024 de peinture est mappé en UV sur CETTE géométrie
-    // précise, pas sur le polygone d'implantation entier : utiliser l'emprise
-    // du polygone entier pour convertir px→mètres (ancien calcul) donnait un
-    // facteur d'échelle totalement faux dès que ce fragment était plus petit
-    // que le polygone complet — d'où l'écart énorme observé entre le cercle
-    // guide et la tache réellement peinte.
-    // BUG CORRIGÉ : ce calcul utilisait mesh.geometry.boundingBox, c'est-à-dire
-    // l'étendue en espace LOCAL de la géométrie — en ignorant complètement
-    // l'échelle propre du mesh et de ses parents jusqu'à worldRoot (le repère
-    // dans lequel vit le cercle-guide grassCursorDecal). Si ce fragment de sol
-    // est mis à l'échelle quelque part dans sa chaîne de parenté (import GLB,
-    // groupe "quartier"…), l'étendue réelle au sol pouvait être plusieurs fois
-    // plus grande que ce que la géométrie locale laissait croire — d'où le
-    // cercle-guide bien plus petit que la tache réellement peinte. On calcule
-    // maintenant la bounding box dans le repère de worldRoot (même repère que
-    // le décalque), en combinant les matrices monde du mesh et de worldRoot.
-    mesh.updateWorldMatrix(true, false);
-    worldRoot.updateWorldMatrix(true, false);
-    const relMatrix = new THREE.Matrix4().copy(worldRoot.matrixWorld).invert().multiply(mesh.matrixWorld);
-    if(!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-    const bbRel = mesh.geometry.boundingBox.clone().applyMatrix4(relMatrix);
-    const worldSpan = (Math.abs(bbRel.max.x-bbRel.min.x) + Math.abs(bbRel.max.z-bbRel.min.z)) / 2;
-    // Surface RÉELLE (m², dans le repère monde) de ce fragment de sol — calculée
-    // en sommant l'aire de chaque triangle de la géométrie transformée par sa
-    // matrice monde. Contrairement à `worldSpan` (une moyenne largeur/hauteur
-    // de la bounding box, pratique pour convertir un RAYON de pinceau mais
-    // fausse dès que le fragment n'est pas carré ou que sa silhouette n'occupe
-    // pas tout son rectangle englobant), ceci donne l'aire exacte, utilisée
-    // uniquement pour le calcul du % d'espaces verts (voir computeGrassAreaM2).
-    const worldArea = computeMeshWorldArea(mesh);
-    grassParts.push({ mesh, overlayMesh, canvas, ctx, texture, worldSpan: worldSpan || 60, worldArea: worldArea || 0 });
-  });
-}
-
-let grassPainting = false;
-AppState.setGrassPainting(grassPainting);
-let grassPointerActive = false;
-const btnGrass = document.getElementById('btn-paint-grass');
-const grassBrushPopout = document.getElementById('grass-brush-popout');
-function positionGrassBrushPopout(){
-  const r = btnGrass.getBoundingClientRect();
-  grassBrushPopout.style.left = (r.right + 8) + 'px';
-  grassBrushPopout.style.top = r.top + 'px';
-}
-window.addEventListener('resize', ()=>{ if(grassPainting) positionGrassBrushPopout(); });
-
-// Repère circulaire au sol pour le pinceau de gazon : à l'inverse du guide de
-// tracé, il est plein sur le bord intérieur (le contour du pinceau) et
-// transparent en allant vers le centre.
-const GRASS_CURSOR_COLOR = '124,220,110';
-let grassCursorDecal = null;
-function ensureGrassCursorDecal(){
-  if(grassCursorDecal) return grassCursorDecal;
-  grassCursorDecal = makeCircleDecal(1, GRASS_CURSOR_COLOR, 'ring', 0.85);
-  grassCursorDecal.position.y = 0.22;
-  grassCursorDecal.visible = false;
-  worldRoot.add(grassCursorDecal);
-  return grassCursorDecal;
-}
-// Conversion rayon pinceau (px sur canvas 1024) -> unités monde, à partir de
-// l'étendue RÉELLE du fragment de sol effectivement survolé (voir
-// setupGrassPaintOverlay) — et non plus du polygone d'implantation entier.
-function grassBrushWorldRadius(part){
-  const span = part ? part.worldSpan : 60;
-  return grassBrushRadius/1024 * span;
-}
-function grassPartUnderCursor(ev){
-  const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((ev.clientX-rect.left)/rect.width)*2-1;
-  pointer.y = -((ev.clientY-rect.top)/rect.height)*2+1;
-  raycaster.setFromCamera(pointer, camera);
-  const hit = raycaster.intersectObjects(grassParts.map(g=>g.mesh), true)[0];
-  if(!hit) return null;
-  return grassParts.find(g=>g.mesh===hit.object) || null;
-}
-function updateGrassCursor(ev){
-  ensureGrassCursorDecal();
-  const pt = groundPointFromEvent(ev);
-  if(!pt){ grassCursorDecal.visible = false; return; }
-  grassCursorDecal.visible = true;
-  grassCursorDecal.position.set(pt.x, 0.22, pt.z);
-  const part = grassPartUnderCursor(ev);
-  const r = Math.max(0.4, grassBrushWorldRadius(part));
-  grassCursorDecal.scale.setScalar(r);
-}
-renderer.domElement.addEventListener('pointermove', (ev)=>{
-  if(!grassPainting) return;
-  updateGrassCursor(ev);
+Grass.initGrass({
+  cancelDraw: DrawTool.cancelDraw, closeDrawMenu: DrawTool.closeDrawMenu, stopLabelTool: Labels.stopLabelTool, stopEditBuildingShape,
+  updateSiteStats, makeCircleDecal, groundPointFromEvent,
 });
-
-function startGrassTool(){
-  if(drawing) cancelDraw();
-  if(drawMenuOpen) closeDrawMenu();
-  if(treePlacing) stopTreeTool();
-  if(labelPlacing) stopLabelTool();
-  ExtGare.cancelExtensionGareIfActive();
-  if(editingBuildingId) stopEditBuildingShape();
-  grassPainting = true;
-  AppState.setGrassPainting(grassPainting);
-  btnGrass.classList.add('active'); btnGrass.querySelector('.tool-btn-label').textContent = 'Glissez pour peindre…';
-  drawHint.classList.add('show');
-  drawHintText.textContent = "Glissez sur la place pour peindre du gazon · clic droit pour effacer (Échap pour arrêter)";
-  drawHintEnter.style.display = 'none';
-  ensureGrassCursorDecal();
-  updateBrushRowState();
-  positionGrassBrushPopout();
-  grassBrushPopout.classList.add('show');
-}
-function stopGrassTool(){
-  grassPainting = false;
-  AppState.setGrassPainting(grassPainting);
-  btnGrass.classList.remove('active'); btnGrass.querySelector('.tool-btn-label').textContent = 'Gazon';
-  drawHint.classList.remove('show');
-  if(grassCursorDecal) grassCursorDecal.visible = false;
-  updateBrushRowState();
-  grassBrushPopout.classList.remove('show');
-}
-btnGrass.addEventListener('click', ()=> grassPainting ? stopGrassTool() : startGrassTool());
-window.addEventListener('keydown', (ev)=>{ if(grassPainting && ev.key==='Escape') stopGrassTool(); });
-
-function paintGrassAt(ev, erase){
-  if(!grassParts.length) return;
-  const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((ev.clientX-rect.left)/rect.width)*2-1;
-  pointer.y = -((ev.clientY-rect.top)/rect.height)*2+1;
-  raycaster.setFromCamera(pointer, camera);
-  const hit = raycaster.intersectObjects(grassParts.map(g=>g.mesh), true)[0];
-  if(!hit || !hit.uv) return;
-  const part = grassParts.find(g=>g.mesh===hit.object) || grassParts[0];
-  const px = hit.uv.x * part.canvas.width;
-  const py = (1-hit.uv.y) * part.canvas.height;
-  part.ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
-  // Dégradé resserré : plein jusqu'à 70% du rayon puis chute rapide sur les
-  // 30% restants — un dégradé qui s'étalait doucement dès le centre (ancien
-  // 2-stops) donnait l'illusion d'une tache bien plus large que le rayon
-  // réellement réglé, car sa moitié externe restait visible à l'œil malgré
-  // une opacité déjà faible.
-  const grad = part.ctx.createRadialGradient(px,py,0, px,py,grassBrushRadius);
-  if(erase){
-    grad.addColorStop(0,'rgba(0,0,0,1)');
-    grad.addColorStop(0.7,'rgba(0,0,0,1)');
-    grad.addColorStop(1,'rgba(0,0,0,0)');
-  } else {
-    grad.addColorStop(0,'rgba(94,168,84,0.95)');
-    grad.addColorStop(0.7,'rgba(94,168,84,0.95)');
-    grad.addColorStop(1,'rgba(94,168,84,0)');
-  }
-  part.ctx.fillStyle = grad;
-  part.ctx.beginPath();
-  part.ctx.arc(px,py,grassBrushRadius,0,Math.PI*2);
-  part.ctx.fill();
-  part.texture.needsUpdate = true;
-}
-
-// Détection large "clic sur la maquette" (peu importe l'élément précis :
-// gazon, quartier, hall, bâtiments, arbres…) — utilisée pour décider si
-// l'orbite caméra doit être bloquée pendant la peinture de gazon. Distincte
-// de grassPartUnderCursor (qui ne teste QUE les fragments de sol peignables,
-// pour savoir où peindre) : un clic sur un bâtiment ou un arbre, par exemple,
-// doit lui aussi bloquer la caméra puisqu'il tombe bien "sur la maquette",
-// même s'il n'y a rien à y peindre.
-function modelHitTargets(){
-  const targets = [siteRoot];
-  if(typeof buildings !== 'undefined') buildings.forEach(b=>{ if(b.group) targets.push(b.group); });
-  if(typeof treesGroup !== 'undefined' && treesGroup) targets.push(treesGroup);
-  return targets;
-}
-function isClickOnModel(ev){
-  const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((ev.clientX-rect.left)/rect.width)*2-1;
-  pointer.y = -((ev.clientY-rect.top)/rect.height)*2+1;
-  raycaster.setFromCamera(pointer, camera);
-  return raycaster.intersectObjects(modelHitTargets(), true).length>0;
-}
-renderer.domElement.addEventListener('pointerdown', (ev)=>{
-  if(!grassPainting) return;
-  // Ne bloquer l'orbite caméra QUE si le clic tombe bien sur la maquette
-  // (n'importe où dessus) — un clic à côté, sur le fond, doit continuer à
-  // permettre de déplacer la caméra normalement pendant qu'on peint, sans
-  // avoir à quitter l'outil Gazon.
-  if(!isClickOnModel(ev)){ grassPointerActive = false; return; }
-  controls.enabled = false;
-  grassPointerActive = true;
-  paintGrassAt(ev, ev.button===2);
-});
-window.addEventListener('pointermove', (ev)=>{
-  if(!grassPainting || !grassPointerActive) return;
-  paintGrassAt(ev, ev.buttons===2);
-});
-window.addEventListener('pointerup', ()=>{
-  const wasPainting = grassPointerActive;
-  grassPointerActive = false;
-  if(grassPainting) controls.enabled = true;
-  if(wasPainting) updateSiteStats(); // recalcul une seule fois en fin de trait (getImageData coûteux)
-});
-// Menu contextuel du navigateur bloqué PARTOUT (fenêtre entière, canvas 3D,
-// UI, chips de labels, etc.) : le clic droit est utilisé dans l'outil pour
-// orbiter/peindre/déplacer selon le mode, un clic droit qui ferait
-// apparaître le menu du navigateur par-dessus casserait ces interactions.
-// Écouteur unique sur `window`, en phase de capture pour intercepter avant
-// tout autre gestionnaire (les gestionnaires spécifiques, comme celui des
-// chips de labels ci-dessous, gardent leur propre logique métier — seul le
-// menu natif du navigateur est supprimé ici).
-window.addEventListener('contextmenu', (ev)=> ev.preventDefault(), true);
-
-const brushBtns = {
-  small: document.getElementById('brush-small'),
-  medium: document.getElementById('brush-medium'),
-  large: document.getElementById('brush-large'),
-};
-const BRUSH_SIZES = { small:6, medium:12, large:20 };
-function setBrushSize(key){
-  grassBrushRadius = BRUSH_SIZES[key];
-  Object.entries(brushBtns).forEach(([k,btn])=> btn.classList.toggle('active', k===key));
-}
-function updateBrushRowState(){
-  // Grisé si le pinceau gazon n'est pas l'outil actif, bleu électrique sur
-  // la taille en cours d'utilisation sinon.
-  Object.values(brushBtns).forEach(btn=> btn.classList.toggle('disabled', !grassPainting));
-}
-brushBtns.small.addEventListener('click', ()=> setBrushSize('small'));
-brushBtns.medium.addEventListener('click', ()=> setBrushSize('medium'));
-brushBtns.large.addEventListener('click', ()=> setBrushSize('large'));
-setBrushSize('medium');
-updateBrushRowState();
 
 /* ============================================================
    BUILDING MODEL
@@ -4554,7 +3339,7 @@ function rebuildMesh(b){
       }
       const ROOF_SPHERE_MIN_HEIGHT = 60; // repères sphériques réservés aux bâtiments de plus de 60m
       if(isLast && topY > ROOF_SPHERE_MIN_HEIGHT){
-        b.group.add(buildRoofCornerSpheres(footprint, topY));
+        b.group.add(Trees.buildRoofCornerSpheres(footprint, topY));
       }
       yCursor += bandHeight;
     });
@@ -4876,27 +3661,6 @@ function updateLegendTotals(){
   updateSiteStats();
 }
 
-// Surface peinte en gazon (m²) : lecture du canal alpha de chaque canvas de
-// peinture (voir setupGrassPaintOverlay) — un pixel avec alpha>0 compte comme
-// peint, converti en m² via le ratio worldSpan/1024 déjà utilisé ailleurs
-// (grassBrushWorldRadius) pour passer du repère pixel au repère monde.
-function computeGrassAreaM2(){
-  let total = 0;
-  grassParts.forEach(part=>{
-    let data;
-    try{ data = part.ctx.getImageData(0,0,part.canvas.width,part.canvas.height).data; }
-    catch(e){ return; } // canvas potentiellement "tainted" — on ignore silencieusement
-    let painted = 0;
-    const totalPx = part.canvas.width * part.canvas.height;
-    for(let i=3;i<data.length;i+=4){ if(data[i]>10) painted++; }
-    // Fraction du canvas peinte × aire monde EXACTE du fragment (voir
-    // computeMeshWorldArea) — ne dépend d'aucune hypothèse de forme carrée ou
-    // de bounding box, donc fiable même pour un fragment de sol irrégulier.
-    total += (painted/totalPx) * (part.worldArea||0);
-  });
-  return total;
-}
-
 // Emprise au sol bâtie (m²) : le socle (footprint de base) de chaque
 // bâtiment, sans compter les étages — c'est la vraie surface "occupée au
 // sol", pas la SDP cumulée (déjà affichée dans le total par usage ci-dessus).
@@ -4918,16 +3682,16 @@ function updateSiteStats(){
   if(!builtEl || !greenEl || !treeEl) return;
   const parcelArea = buildZone.length>=3 ? polygonAreaXZ(buildZone) : 0;
   if(parcelArea<=0){
-    builtEl.textContent = '—'; greenEl.textContent = '—'; treeEl.textContent = `${trees.length}`;
+    builtEl.textContent = '—'; greenEl.textContent = '—'; treeEl.textContent = `${Trees.trees.length}`;
     if(builtBar) builtBar.style.width = '0%';
     if(greenBar) greenBar.style.width = '0%';
     return;
   }
   const builtPct = (computeBuiltFootprintM2() / parcelArea) * 100;
-  const greenPct = (computeGrassAreaM2() / parcelArea) * 100;
+  const greenPct = (Grass.computeGrassAreaM2() / parcelArea) * 100;
   builtEl.textContent = `${builtPct.toFixed(0)} %`;
   greenEl.textContent = `${greenPct.toFixed(0)} %`;
-  treeEl.textContent = `${trees.length}`;
+  treeEl.textContent = `${Trees.trees.length}`;
   // Jauges graphiques (point 6) : simple barre de remplissage, bornée à 100%
   // par sécurité d'affichage même si le ratio calculé dépasse légèrement
   // (chevauchements de polygones, arrondis...).
@@ -5339,7 +4103,7 @@ function setVertexSelectMode(mode){
     controls.enabled = true;
     renderer.domElement.style.cursor = '';
   } else {
-    flashStatus('Tracez un carré sur la grille pour sélectionner plusieurs sommets');
+    DrawTool.flashStatus('Tracez un carré sur la grille pour sélectionner plusieurs sommets');
   }
 }
 btnSelectPoint.addEventListener('click', ()=> setVertexSelectMode('point'));
@@ -5399,7 +4163,7 @@ window.addEventListener('pointerup', (ev)=>{
   });
   bldgSelected = new Set(picked);
   rebuildBldgSelectionVisuals();
-  flashStatus(picked.length ? `${picked.length} sommet(s) sélectionné(s)` : 'Aucun sommet dans ce carré');
+  DrawTool.flashStatus(picked.length ? `${picked.length} sommet(s) sélectionné(s)` : 'Aucun sommet dans ce carré');
 }, true);
 
 /* ============================================================
@@ -5479,15 +4243,15 @@ document.getElementById('edit-banner-cancel').addEventListener('click', ()=>{
     }
   }
   stopEditBuildingShape();
-  flashStatus('Modifications annulées');
+  DrawTool.flashStatus('Modifications annulées');
 });
 function startEditBuildingShape(b, bandIndex=null){
   if(editingBuildingId && editingBuildingId!==b.id) stopEditBuildingShape();
-  if(drawing) cancelDraw();
-  if(drawMenuOpen) closeDrawMenu();
-  if(treePlacing) stopTreeTool();
-  if(grassPainting) stopGrassTool();
-  if(labelPlacing) stopLabelTool();
+  if(drawing) DrawTool.cancelDraw();
+  if(drawMenuOpen) DrawTool.closeDrawMenu();
+  if(treePlacing) Trees.stopTreeTool();
+  if(grassPainting) Grass.stopGrassTool();
+  if(labelPlacing) Labels.stopLabelTool();
   ExtGare.cancelExtensionGareIfActive();
   editingBuildingId = b.id;
   AppState.setEditingBuildingId(editingBuildingId);
@@ -5503,7 +4267,7 @@ function startEditBuildingShape(b, bandIndex=null){
   setVertexSelectMode('point');
   refreshVertexSelectBar();
   refreshEditBanner();
-  flashStatus(bandIndex===null
+  DrawTool.flashStatus(bandIndex===null
     ? "Cliquez les sommets pour les sélectionner (plusieurs possibles) · glissez pour déplacer · reclic sur Modifier pour terminer"
     : "Cliquez les sommets du décroché pour les sélectionner · glissez pour déplacer · reclic sur le bouton pour terminer");
 }
@@ -5526,7 +4290,7 @@ function stopEditBuildingShape(){
   gizmoGroup.visible = false;
   controls.enabled = true;
   renderer.domElement.style.cursor = '';
-  clearTreesOverlapWarning();
+  Trees.clearTreesOverlapWarning();
   setVertexSelectMode('point');
   refreshVertexSelectBar();
   refreshEditBanner();
@@ -5550,11 +4314,11 @@ let moveOriginalSnapshot = null; // état complet AVANT le début du déplacemen
 function startMoveBuilding(b){
   if(movingBuildingId && movingBuildingId!==b.id) stopMoveBuilding();
   if(editingBuildingId) stopEditBuildingShape();
-  if(drawing) cancelDraw();
-  if(drawMenuOpen) closeDrawMenu();
-  if(treePlacing) stopTreeTool();
-  if(grassPainting) stopGrassTool();
-  if(labelPlacing) stopLabelTool();
+  if(drawing) DrawTool.cancelDraw();
+  if(drawMenuOpen) DrawTool.closeDrawMenu();
+  if(treePlacing) Trees.stopTreeTool();
+  if(grassPainting) Grass.stopGrassTool();
+  if(labelPlacing) Labels.stopLabelTool();
   ExtGare.cancelExtensionGareIfActive();
   movingBuildingId = b.id;
   moveOriginalSnapshot = snapshotBuildingContours(b);
@@ -5576,7 +4340,7 @@ function stopMoveBuilding(){
   renderer.domElement.style.cursor = '';
   drawHint.classList.remove('show');
   drawHintEnter.style.display = '';
-  clearTreesOverlapWarning();
+  Trees.clearTreesOverlapWarning();
   const b = buildings.find(x=>x.id===id);
   if(b){ rebuildMesh(b); renderBldgEditWindow(b); }
   renderList();
@@ -5593,7 +4357,7 @@ function cancelMoveBuilding(){
     });
   }
   stopMoveBuilding();
-  flashStatus('Déplacement annulé');
+  DrawTool.flashStatus('Déplacement annulé');
 }
 
 /* ------------------------------------------------------------
@@ -5609,11 +4373,11 @@ let cloneRotateStart = null; // {startClientX, snapshot}
 function startCloneBuilding(source){
   if(movingBuildingId) stopMoveBuilding();
   if(editingBuildingId) stopEditBuildingShape();
-  if(drawing) cancelDraw();
-  if(drawMenuOpen) closeDrawMenu();
-  if(treePlacing) stopTreeTool();
-  if(grassPainting) stopGrassTool();
-  if(labelPlacing) stopLabelTool();
+  if(drawing) DrawTool.cancelDraw();
+  if(drawMenuOpen) DrawTool.closeDrawMenu();
+  if(treePlacing) Trees.stopTreeTool();
+  if(grassPainting) Grass.stopGrassTool();
+  if(labelPlacing) Labels.stopLabelTool();
   ExtGare.cancelExtensionGareIfActive();
   const pointsClone = source.points.map(p=>({x:p.x, z:p.z}));
   const bandsClone = JSON.parse(JSON.stringify(source.bands||[]));
@@ -5655,7 +4419,7 @@ function cancelCloneBuilding(){
   drawHint.classList.remove('show');
   drawHintEnter.style.display = '';
   if(id!=null) deleteBuilding(id, {silent:true});
-  flashStatus('Clonage annulé');
+  DrawTool.flashStatus('Clonage annulé');
 }
 renderer.domElement.addEventListener('pointermove', (ev)=>{
   if(!cloningBuildingId) return;
@@ -5699,7 +4463,7 @@ renderer.domElement.addEventListener('click', (ev)=>{
   if(!cloningBuildingId || cloneRotating) return;
   const b = buildings.find(x=>x.id===cloningBuildingId);
   if(b && buildingExceedsZone(b)){
-    flashStatus('Hors du polygone d\'implantation — impossible de poser le clone ici', true);
+    DrawTool.flashStatus('Hors du polygone d\'implantation — impossible de poser le clone ici', true);
     return; // blocage : on ne pose pas, le clone reste attaché au curseur
   }
   finishCloneBuilding();
@@ -5761,7 +4525,7 @@ window.addEventListener('pointermove', (ev)=>{
   }
   rebuildMesh(b);
   setZoneViolationVisuals(b, buildingExceedsZone(b), 'Clic gauche glissé : déplacer · Clic droit glissé : pivoter');
-  updateTreesOverlapWarningForPolygon(b.points);
+  Trees.updateTreesOverlapWarningForPolygon(b.points);
 }, { passive:true });
 window.addEventListener('pointerup', ()=>{
   if(!buildingMoveDrag) return;
@@ -5853,7 +4617,7 @@ function splitSelectedFacadeEdge(){
   let from = -1;
   if((i1+1)%n === i2) from = i1;
   else if((i2+1)%n === i1) from = i2;
-  if(from===-1){ flashStatus('Les 2 sommets sélectionnés doivent être adjacents (une même façade)', true); return; }
+  if(from===-1){ DrawTool.flashStatus('Les 2 sommets sélectionnés doivent être adjacents (une même façade)', true); return; }
   const a = pts[from], c = pts[(from+1)%n];
   const mid = { x:(a.x+c.x)/2, z:(a.z+c.z)/2 };
   const newPts = pts.slice();
@@ -5864,7 +4628,7 @@ function splitSelectedFacadeEdge(){
   rebuildBldgSelectionVisuals();
   rebuildMesh(b);
   renderList();
-  flashStatus('Façade coupée en 2');
+  DrawTool.flashStatus('Façade coupée en 2');
 }
 document.getElementById('btn-split-edge').addEventListener('click', splitSelectedFacadeEdge);
 
@@ -6194,7 +4958,7 @@ window.addEventListener('pointermove', (ev)=>{
       }
       rebuildMesh(b);
       rebuildBldgSelectionVisuals();
-      if(!editingBand) updateTreesOverlapWarningForPolygon(pts);
+      if(!editingBand) Trees.updateTreesOverlapWarningForPolygon(pts);
     }
     return;
   }
@@ -6229,7 +4993,7 @@ window.addEventListener('pointermove', (ev)=>{
     pts[idx] = { x: target.x, z: target.z };
     bldgVertexHandles[idx].holder.position.set(target.x, handleY, target.z);
     rebuildMesh(b);
-    if(editingBandIndex===null) updateTreesOverlapWarningForPolygon(pts);
+    if(editingBandIndex===null) Trees.updateTreesOverlapWarningForPolygon(pts);
     return;
   }
   // Pas de glissement en cours : simple survol des poignées, pour un retour
@@ -6270,7 +5034,7 @@ window.addEventListener('pointerup', (ev)=>{
         const { pts: settled, reverted } = revertBandOverflowIfNeeded(pts, belowFootprint, movedEntries);
         if(reverted){
           finalPts = settled;
-          flashStatus('Déplacement annulé : débord au-delà de 30% maximum', true);
+          DrawTool.flashStatus('Déplacement annulé : débord au-delà de 30% maximum', true);
         } else {
           const cleaned = (cleanPolygonPoints(settled) || settled);
           finalPts = simplifyClosedPolygon(cleaned) || cleaned;
@@ -6315,7 +5079,7 @@ window.addEventListener('pointerup', (ev)=>{
       // l'emprise finale retirés pour de bon dès que ce glissement de
       // sommet(s) du socle est relâché — c'est la validation immédiate de
       // cette modification, il n'y a pas d'étape "valider" séparée ici.
-      if(editingBandIndex===null) removeTreesUnderFootprint(finalPts);
+      if(editingBandIndex===null) Trees.removeTreesUnderFootprint(finalPts);
       // La réparation peut insérer/fusionner des sommets : on retrouve les
       // sommets sélectionnés par proximité de coordonnées pour ne PAS perdre
       // la sélection — l'utilisateur peut ainsi enchaîner plusieurs
@@ -6364,7 +5128,7 @@ window.addEventListener('pointerup', (ev)=>{
       const { pts: settled, reverted } = revertBandOverflowIfNeeded(pts, belowFootprint, movedEntries);
       if(reverted){
         finalPts = settled;
-        flashStatus('Déplacement annulé : débord au-delà de 30% maximum', true);
+        DrawTool.flashStatus('Déplacement annulé : débord au-delà de 30% maximum', true);
       } else {
         const cleaned = (cleanPolygonPoints(settled) || settled);
         finalPts = simplifyClosedPolygon(cleaned) || cleaned;
@@ -6387,7 +5151,7 @@ window.addEventListener('pointerup', (ev)=>{
       if(b.bands[0]) b.bands[0].points = finalPts.map(p=>({x:p.x, z:p.z}));
     }
     setEditTargetPoints(b, finalPts);
-    if(editingBandIndex===null) removeTreesUnderFootprint(finalPts);
+    if(editingBandIndex===null) Trees.removeTreesUnderFootprint(finalPts);
     bldgSelected = remapSelectionByProximity(selectedCoords, editTargetPoints(b));
     rebuildMesh(b);
     rebuildBldgVertexHandles(b);
@@ -6657,7 +5421,7 @@ function renderBldgEditWindow(b){
   // étage (voir plus bas : ajoutée en dernier, donc affichée tout en haut
   // grâce au column-reverse) — repère visuel évident pour ajouter un volume
   // supérieur, plutôt qu'un bouton texte perdu au milieu des actions. ----------
-  const isDrawingVolume = volumeDrawTargetId===b.id;
+  const isDrawingVolume = DrawTool.volumeDrawTargetId===b.id;
   const ghost = document.createElement('div');
   ghost.className = 'floor-cell fc-ghost' + (isDrawingVolume ? ' active' : '');
   ghost.title = isDrawingVolume
@@ -6665,7 +5429,7 @@ function renderBldgEditWindow(b){
     : "Ajouter un volume supérieur : trace un nouveau décroché sur le toit — jusqu'à 30% de débord max par rapport au dessous";
   ghost.innerHTML = `<span class="fc-label">${isDrawingVolume ? '✕ Annuler le tracé' : '+ Volume supérieur'}</span>`;
   ghost.addEventListener('click', ()=>{
-    if(volumeDrawTargetId===b.id){ cancelDraw(); } else { startVolumeDraw(b); }
+    if(DrawTool.volumeDrawTargetId===b.id){ DrawTool.cancelDraw(); } else { DrawTool.startVolumeDraw(b); }
     renderBldgEditWindow(b);
   });
   floorStack.appendChild(ghost);
@@ -6724,7 +5488,7 @@ function renderBldgEditWindow(b){
     : '<i data-lucide="move"></i> Déplacer';
   moveBtn.title = 'Déplacer et pivoter tout le bâtiment (socle + volumes supérieurs) : clic gauche glissé = déplacer, clic droit glissé = pivoter';
   moveBtn.addEventListener('click', ()=>{
-    isMovingThis ? tryValidateMove() : startMoveBuilding(b);
+    isMovingThis ? DrawTool.tryValidateMove() : startMoveBuilding(b);
     renderBldgEditWindow(b);
   });
   const cloneBtn = document.createElement('button');
@@ -7417,7 +6181,7 @@ function refreshSimToggleUI(){
 btnSimToggle.addEventListener('click', ()=>{
   simulationPaused = !simulationPaused;
   refreshSimToggleUI();
-  flashStatus(simulationPaused ? 'Simulation en pause' : 'Simulation relancée');
+  DrawTool.flashStatus(simulationPaused ? 'Simulation en pause' : 'Simulation relancée');
 });
 const sunPanel = document.getElementById('sun-panel');
 document.getElementById('btn-sun-panel').addEventListener('click', (ev)=>{
@@ -7482,357 +6246,10 @@ ensureDayVisualEnvironment();
 applyDayAtHour(12, {heavy:true});
 
 /* ============================================================
-   LABELS — point au sol + étiquette décalée + ligne de rappel
-   ============================================================
-   Le point 3D (petite sphère) fait partie de la scène WebGL, donc il
-   apparaît automatiquement dans le rendu ET dans l'export PNG. L'étiquette
-   texte et la ligne de rappel, elles, vivent en HTML/SVG par-dessus le
-   canvas — nécessaire pour un anti-chevauchement dynamique fluide (mesure
-   réelle de la largeur du texte, recalcul à chaque frame selon la caméra).
-   Comme ces calques HTML n'apparaissent PAS automatiquement dans un export
-   canvas.toDataURL(), l'export PNG les redessine à la main sur un canvas
-   hors-écran à partir des mêmes coordonnées déjà calculées (voir plus bas).
+   LABELS — module externalisé (src/labels.js).
    ============================================================ */
-let labels = [];
-AppState.setLabels(labels);
-let labelIdCounter = 1;
-let labelsVisible = true;
-let labelPlacing = false;
-AppState.setLabelPlacing(labelPlacing);
-// Mode de pose : 'ground' (au sol, comportement d'origine) ou 'building'
-// (collé sur une face ou un toit de bâtiment — socle ou volume supérieur,
-// peu importe : on raycast directement contre les meshes réels du bâtiment,
-// donc ça marche identiquement pour les deux).
-let labelMode = 'ground';
-const labelGroup = new THREE.Group(); worldRoot.add(labelGroup);
-const labelLayer = document.getElementById('label-layer');
-const labelLinesSvg = document.getElementById('label-lines');
-const btnLabel = document.getElementById('btn-label');
-const labelModePopout = document.getElementById('label-mode-popout');
-const labelModeBtns = {
-  ground: document.getElementById('label-mode-ground'),
-  building: document.getElementById('label-mode-building'),
-};
-function setLabelMode(mode){
-  labelMode = mode;
-  Object.entries(labelModeBtns).forEach(([k,btn])=> btn.classList.toggle('active', k===mode));
-}
-labelModeBtns.ground.addEventListener('click', ()=> setLabelMode('ground'));
-labelModeBtns.building.addEventListener('click', ()=> setLabelMode('building'));
-function positionLabelModePopout(){
-  const r = btnLabel.getBoundingClientRect();
-  labelModePopout.style.left = (r.right + 8) + 'px';
-  labelModePopout.style.top = r.top + 'px';
-}
-window.addEventListener('resize', ()=>{ if(labelPlacing) positionLabelModePopout(); });
-
-function addLabel(x, z, text, opts={}){
-  const id = labelIdCounter++;
-  const locked = !!opts.locked;
-  const onBuilding = !!opts.onBuilding;
-  // Hauteur du point d'ancrage : 0.3 au-dessus du sol par défaut (labels
-  // classiques), sinon l'altitude EXACTE du point cliqué sur la façade/le
-  // toit (voir buildingSurfaceHitFromEvent) — c'est ce qui permet à un label
-  // "bâtiment" de rester posé en hauteur, pile sur la surface visée.
-  const y = opts.y!==undefined ? opts.y : 0.3;
-  const marker = new THREE.Mesh(
-    new THREE.SphereGeometry(0.5,12,12),
-    new THREE.MeshBasicMaterial({color: locked ? 0x8a8f96 : NEON_BLUE})
-  );
-  marker.position.set(x, y, z);
-  labelGroup.add(marker);
-
-  const chip = document.createElement('div');
-  chip.className = 'label-chip' + (onBuilding ? ' on-building' : '');
-  if(locked) chip.classList.add('locked');
-  chip.textContent = text;
-  const isAdminNow = document.body.classList.contains('is-admin');
-  chip.title = locked
-    ? (isAdminNow ? 'Label ADMIN (depart.json) — Cliquer : modifier · Cliquer-glisser : déplacer · Clic droit : supprimer · pensez à "Enregistrer depart.json"' : 'Label existant (non modifiable) — masquable via l\'œil du panneau')
-    : 'Cliquer : modifier · Cliquer-glisser : déplacer';
-  labelLayer.appendChild(chip);
-
-  const line = document.createElementNS('http://www.w3.org/2000/svg','line');
-  line.setAttribute('stroke', locked ? 'rgba(138,143,150,.65)' : `rgba(${NEON_BLUE_CSS},.65)`);
-  line.setAttribute('stroke-width', '1.2');
-  line.setAttribute('stroke-dasharray', '2,3');
-  labelLinesSvg.appendChild(line);
-
-  const rec = { id, x, y, z, text, marker, chip, line, anchorX:0, anchorY:0, screenX:0, screenY:0, behind:false, locked, onBuilding };
-  wireLabelChipInteractions(rec);
-  labels.push(rec);
-  updateLabelPositions();
-  return rec;
-}
-// Cliquer-glisser-déposer pour déplacer un label sur le sol, simple clic
-// (sans déplacement) pour ouvrir la modale d'édition de son texte.
-let labelDrag = null; // {rec, moved}
-function wireLabelChipInteractions(rec){
-  // Labels de départ (depart.json, rec.locked=true) : verrouillés pour les
-  // visiteurs (ni déplaçables, ni éditables, ni supprimables — seul l'œil
-  // global les masque), mais l'ADMIN doit pouvoir les modifier et les
-  // réenregistrer (bouton "Enregistrer depart.json"), sinon toute correction
-  // serait perdue au prochain remplacement du fichier depart.json.
-  if(rec.locked && !document.body.classList.contains('is-admin')) return;
-  rec.chip.addEventListener('contextmenu', (ev)=>{
-    ev.preventDefault();
-    if(rec.locked && !document.body.classList.contains('is-admin')) return;
-    removeLabel(rec.id);
-  });
-  rec.chip.addEventListener('pointerdown', (ev)=>{
-    if(ev.button!==0) return;
-    ev.stopPropagation();
-    labelDrag = { rec, moved:false };
-    rec.chip.setPointerCapture(ev.pointerId);
-    rec.chip.classList.add('dragging');
-  });
-  rec.chip.addEventListener('pointermove', (ev)=>{
-    if(!labelDrag || labelDrag.rec!==rec) return;
-    labelDrag.moved = true;
-    const pt = siteGroundHitFromEvent(ev);
-    if(!pt) return;
-    let target = pt;
-    const isAdmin = document.body.classList.contains('is-admin');
-    if(!isAdmin && buildZone.length>=3) target = clampPointToPolygon(pt, buildZone);
-    rec.x = target.x; rec.z = target.z; rec.y = 0.3;
-    // Un glissement se fait toujours au sol : un label "bâtiment" qu'on
-    // déplace ainsi redevient un label au sol classique (pastille ronde).
-    if(rec.onBuilding){ rec.onBuilding = false; rec.chip.classList.remove('on-building'); }
-    rec.marker.position.set(rec.x, rec.y, rec.z);
-    updateLabelPositions();
-  });
-  rec.chip.addEventListener('pointerup', (ev)=>{
-    if(!labelDrag || labelDrag.rec!==rec) return;
-    rec.chip.releasePointerCapture(ev.pointerId);
-    rec.chip.classList.remove('dragging');
-    const moved = labelDrag.moved;
-    labelDrag = null;
-    if(!moved) openLabelEditModal(rec);
-  });
-}
-function removeLabel(id){
-  const idx = labels.findIndex(l=>l.id===id);
-  if(idx<0) return;
-  const l = labels[idx];
-  labelGroup.remove(l.marker); l.marker.geometry.dispose(); l.marker.material.dispose();
-  l.chip.remove(); l.line.remove();
-  labels.splice(idx,1);
-}
-const _labelProjVec = new THREE.Vector3();
-function updateLabelPositions(){
-  if(!labels.length) return;
-  const rect = renderer.domElement.getBoundingClientRect();
-  if(!rect.width || !rect.height) return;
-  const activeCam = planViewActive ? orthoCamera : camera;
-  const placedRects = [];
-  labels.forEach(l=>{
-    _labelProjVec.set(l.x, l.y!==undefined ? l.y : 0.3, l.z).project(activeCam);
-    const behind = _labelProjVec.z > 1;
-    const sx = (_labelProjVec.x*0.5+0.5) * rect.width;
-    const sy = (1-(_labelProjVec.y*0.5+0.5)) * rect.height;
-    l.anchorX = sx; l.anchorY = sy; l.behind = behind;
-    if(behind || !labelsVisible){
-      l.chip.style.display = 'none'; l.line.style.display = 'none';
-      return;
-    }
-    l.chip.style.display = ''; l.line.style.display = '';
-    // Position de base : décalée en haut-à-droite du point, puis repoussée
-    // vers le bas si elle chevauche une étiquette déjà placée cette frame —
-    // évite la superposition sans jamais cacher un label sous un autre.
-    const w = l.chip.offsetWidth || 60, h = l.chip.offsetHeight || 22;
-    let cx = sx + 22, cy = sy - 18;
-    let tries = 0;
-    while(tries < 40){
-      const r = { left:cx-w/2, right:cx+w/2, top:cy-h, bottom:cy };
-      const overlap = placedRects.some(o => !(r.right<o.left || r.left>o.right || r.bottom<o.top || r.top>o.bottom));
-      if(!overlap) break;
-      cy += h+4; tries++;
-    }
-    placedRects.push({ left:cx-w/2, right:cx+w/2, top:cy-h, bottom:cy });
-    l.chip.style.left = cx+'px'; l.chip.style.top = cy+'px';
-    l.screenX = cx; l.screenY = cy - h/2;
-    l.line.setAttribute('x1', sx); l.line.setAttribute('y1', sy);
-    l.line.setAttribute('x2', cx); l.line.setAttribute('y2', cy - h*0.3);
-  });
-}
-function stopLabelTool(){
-  labelPlacing = false;
-  AppState.setLabelPlacing(labelPlacing);
-  btnLabel.classList.remove('active');
-  if(labelPlantHalo) labelPlantHalo.visible = false;
-  if(labelSurfaceHalo) labelSurfaceHalo.visible = false;
-  labelModePopout.classList.remove('show');
-}
-btnLabel.addEventListener('click', ()=>{
-  if(!labelPlacing){
-    // Comme les autres outils : n'en garder qu'un seul actif à la fois.
-    if(drawing) cancelDraw();
-  if(drawMenuOpen) closeDrawMenu();
-    if(treePlacing) stopTreeTool();
-    if(grassPainting) stopGrassTool();
-    ExtGare.cancelExtensionGareIfActive();
-    if(editingBuildingId) stopEditBuildingShape();
-  }
-  labelPlacing = !labelPlacing;
-  AppState.setLabelPlacing(labelPlacing);
-  btnLabel.classList.toggle('active', labelPlacing);
-  if(labelPlacing){
-    positionLabelModePopout();
-    labelModePopout.classList.add('show');
-  } else {
-    labelModePopout.classList.remove('show');
-  }
-  flashStatus(labelPlacing
-    ? (labelMode==='building'
-        ? "Cliquez sur une façade ou un toit de bâtiment pour y coller un label (Échap pour annuler)"
-        : "Cliquez sur la maquette pour poser un label (Échap pour annuler)")
-    : 'Pose de label annulée');
-});
-window.addEventListener('keydown', (ev)=>{
-  if(ev.key==='Escape' && labelPlacing) stopLabelTool();
-});
-// Raycast contre les VRAIS meshes des bâtiments (socle ET volumes
-// supérieurs — tous logés dans le même b.group, voir rebuildMesh) : renvoie
-// le point 3D exact d'impact sur une façade ou un toit, à sa vraie hauteur.
-function buildingSurfaceHitFromEvent(ev){
-  const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((ev.clientX-rect.left)/rect.width)*2-1;
-  pointer.y = -((ev.clientY-rect.top)/rect.height)*2+1;
-  raycaster.setFromCamera(pointer, camera);
-  const meshes = [];
-  buildings.forEach(b=> b.group.children.forEach(o=>{ if(o.isMesh) meshes.push(o); }));
-  const hit = raycaster.intersectObjects(meshes, false)[0];
-  return hit ? hit.point : null;
-}
-renderer.domElement.addEventListener('click', (ev)=>{
-  if(!labelPlacing) return;
-  if(labelMode==='building'){
-    const hit = buildingSurfaceHitFromEvent(ev);
-    if(!hit){ flashStatus("Cliquez sur une façade ou un toit de bâtiment pour y coller un label", true); return; }
-    stopLabelTool();
-    openLabelEditModal(null, { x:hit.x, y:hit.y, z:hit.z, onBuilding:true });
-    return;
-  }
-  const pt = siteGroundHitFromEvent(ev);
-  if(!pt){ flashStatus("Cliquez sur la maquette pour poser un label"); return; }
-  const isAdmin = document.body.classList.contains('is-admin');
-  if(!isAdmin && buildZone.length>=3 && !pointInPolygon({x:pt.x, z:pt.z}, buildZone)){
-    flashStatus("Les labels ne peuvent être posés que dans le polygone d'implantation", true);
-    return;
-  }
-  stopLabelTool();
-  openLabelEditModal(null, pt);
-});
-
-/* ------------------------------------------------------------
-   Repère pendant la pose d'un label :
-   - mode "sol" : décalque au sol, même mécanisme que le halo de plantation
-     des arbres (ensureTreePlantHalo) — bleu si le point est dans le polygone
-     d'implantation (pose autorisée), rouge sinon.
-   - mode "bâtiment" : petite sphère qui suit le point d'impact EXACT sur la
-     façade/le toit visé (pas de notion d'autorisé/refusé ici : n'importe
-     quelle surface de bâtiment convient).
-   ------------------------------------------------------------ */
-const LABEL_PLANT_COLOR = NEON_BLUE_CSS;
-const LABEL_BLOCKED_COLOR = '224,71,63';
-let labelPlantHalo = null;
-function ensureLabelPlantHalo(){
-  if(labelPlantHalo) return labelPlantHalo;
-  labelPlantHalo = makeCircleDecal(1.4, LABEL_PLANT_COLOR, 'fill');
-  labelPlantHalo.position.y = 0.05;
-  labelPlantHalo.visible = false;
-  worldRoot.add(labelPlantHalo);
-  return labelPlantHalo;
-}
-let labelSurfaceHalo = null;
-function ensureLabelSurfaceHalo(){
-  if(labelSurfaceHalo) return labelSurfaceHalo;
-  labelSurfaceHalo = new THREE.Mesh(
-    new THREE.SphereGeometry(0.55,14,14),
-    new THREE.MeshBasicMaterial({ color:NEON_BLUE, depthTest:false, transparent:true, opacity:0.9 })
-  );
-  labelSurfaceHalo.renderOrder = 50;
-  labelSurfaceHalo.visible = false;
-  worldRoot.add(labelSurfaceHalo);
-  return labelSurfaceHalo;
-}
-renderer.domElement.addEventListener('pointermove', (ev)=>{
-  if(!labelPlacing){
-    if(labelPlantHalo) labelPlantHalo.visible = false;
-    if(labelSurfaceHalo) labelSurfaceHalo.visible = false;
-    return;
-  }
-  if(labelMode==='building'){
-    if(labelPlantHalo) labelPlantHalo.visible = false;
-    ensureLabelSurfaceHalo();
-    const hit = buildingSurfaceHitFromEvent(ev);
-    if(!hit){ labelSurfaceHalo.visible = false; return; }
-    labelSurfaceHalo.position.copy(hit);
-    labelSurfaceHalo.visible = true;
-    return;
-  }
-  if(labelSurfaceHalo) labelSurfaceHalo.visible = false;
-  ensureLabelPlantHalo();
-  const pt = siteGroundHitFromEvent(ev);
-  if(!pt){ labelPlantHalo.visible = false; return; }
-  const isAdmin = document.body.classList.contains('is-admin');
-  const ok = isAdmin || buildZone.length<3 || pointInPolygon({x:pt.x, z:pt.z}, buildZone);
-  labelPlantHalo.material.color.set(ok ? `rgb(${LABEL_PLANT_COLOR})` : `rgb(${LABEL_BLOCKED_COLOR})`);
-  labelPlantHalo.position.set(pt.x, (pt.y||0)+0.05, pt.z);
-  labelPlantHalo.visible = true;
-});
-
-/* ------------------------------------------------------------
-   MODALE D'ÉDITION DE LABEL — remplace window.prompt() par une modale au
-   design du site. Sert aussi bien à la création (rec=null, pos fourni)
-   qu'à l'édition d'un label existant (rec fourni).
-   ------------------------------------------------------------ */
-const labelEditOverlay = document.getElementById('label-edit-overlay');
-const labelEditTitle = document.getElementById('label-edit-title');
-const labelEditInput = document.getElementById('label-edit-input');
-const labelEditDelete = document.getElementById('label-edit-delete');
-let labelEditState = null; // {rec, pos}
-function openLabelEditModal(rec, pos){
-  labelEditState = { rec, pos };
-  labelEditTitle.firstChild.textContent = rec ? (rec.locked ? 'Modifier le label ADMIN ' : 'Modifier le label ') : 'Nouveau label ';
-  labelEditInput.value = rec ? rec.text : '';
-  labelEditDelete.style.display = rec ? '' : 'none';
-  labelEditOverlay.classList.add('show');
-  if(window.lucide) lucide.createIcons();
-  setTimeout(()=>{ labelEditInput.focus(); labelEditInput.select(); }, 30);
-}
-function closeLabelEditModal(){
-  labelEditOverlay.classList.remove('show');
-  labelEditState = null;
-}
-function saveLabelEditModal(){
-  if(!labelEditState) return;
-  const text = labelEditInput.value.trim();
-  const { rec, pos } = labelEditState;
-  if(!text){ closeLabelEditModal(); return; }
-  if(rec){
-    rec.text = text;
-    rec.chip.textContent = text;
-  } else if(pos){
-    // Un point venant du mode "bâtiment" porte `onBuilding` et sa hauteur
-    // exacte d'impact ; un point du mode "sol" (Vector3 brut) garde le
-    // comportement d'origine : marqueur légèrement flottant à 0.3m (défaut
-    // d'addLabel), pas la hauteur brute du raycast au sol.
-    addLabel(pos.x, pos.z, text, pos.onBuilding ? { y: pos.y, onBuilding: true } : {});
-  }
-  closeLabelEditModal();
-}
-document.getElementById('label-edit-save').addEventListener('click', saveLabelEditModal);
-document.getElementById('label-edit-cancel').addEventListener('click', closeLabelEditModal);
-document.getElementById('label-edit-close').addEventListener('click', closeLabelEditModal);
-labelEditDelete.addEventListener('click', ()=>{
-  if(labelEditState && labelEditState.rec) removeLabel(labelEditState.rec.id);
-  closeLabelEditModal();
-});
-labelEditOverlay.addEventListener('click', (e)=>{ if(e.target===labelEditOverlay) closeLabelEditModal(); });
-labelEditInput.addEventListener('keydown', (ev)=>{
-  if(ev.key==='Enter'){ ev.preventDefault(); saveLabelEditModal(); }
-  else if(ev.key==='Escape'){ ev.preventDefault(); closeLabelEditModal(); }
+Labels.initLabels({
+  cancelDraw: DrawTool.cancelDraw, closeDrawMenu: DrawTool.closeDrawMenu, stopEditBuildingShape, flashStatus: DrawTool.flashStatus, makeCircleDecal,
 });
 
 /* ============================================================
@@ -8011,8 +6428,8 @@ document.getElementById('btn-save-json').addEventListener('click', ()=>{
   const data = {
     version: 2,
     buildings: buildings.map(b=>({ name:b.name, points:b.points, floors:b.floors, bands:b.bands })),
-    trees: trees.map(t=>({ x:t.x, z:t.z })),
-    grass: grassParts.map(p=> p.canvas.toDataURL('image/png')),
+    trees: Trees.serializeTrees(),
+    grass: Grass.serializeGrass(),
     labels: labels.filter(l=>!l.locked).map(l=>({ x:l.x, z:l.z, y:l.y, text:l.text, onBuilding:l.onBuilding||false })),
     extensionGare: ExtGare.serializeExtensionGare(),
     usageColors: Object.fromEntries(Object.entries(USAGE_COLORS).map(([k,v])=>[k, '#'+v.toString(16).padStart(6,'0')]))
@@ -8037,7 +6454,7 @@ if(btnSaveDepart){
   btnSaveDepart.addEventListener('click', ()=>{
     const departData = {
       buildings: buildings.map(b=>({ name:b.name, points:b.points, floors:b.floors, bands:b.bands })),
-      trees: trees.map(t=>({ x:t.x, z:t.z })),
+      trees: Trees.serializeTrees(),
       labels: labels.map(l=>({ x:l.x, z:l.z, y:l.y, text:l.text, onBuilding:l.onBuilding||false }))
     };
     const blob = new Blob([JSON.stringify(departData,null,2)], {type:'application/json'});
@@ -8045,7 +6462,7 @@ if(btnSaveDepart){
     link.download = 'depart.json';
     link.href = URL.createObjectURL(blob);
     link.click();
-    flashStatus('depart.json généré — remplacez le fichier sur le serveur pour appliquer les changements');
+    DrawTool.flashStatus('depart.json généré — remplacez le fichier sur le serveur pour appliquer les changements');
   });
 }
 
@@ -8088,39 +6505,22 @@ fileLoad.addEventListener('change', (e)=>{
       }
 
       // Arbres
-      trees.forEach(t=> treesGroup.remove(t.mesh));
-      trees = []; treeIdCounter = 1;
-      (data.trees||[]).forEach(t=> addTree({x:t.x, y:0, z:t.z}));
+      Trees.loadTrees(data.trees);
 
       // Labels (les labels ADMIN verrouillés, issus de depart.json, ne sont
       // pas inclus dans les sauvegardes de projet — on ne touche donc qu'aux
       // labels normaux ici, pour ne pas les faire disparaître au chargement).
-      labels.filter(l=>!l.locked).forEach(l=> removeLabel(l.id));
-      labels = labels.filter(l=>l.locked);
-      (data.labels||[]).forEach(l=> addLabel(l.x, l.z, l.text, { y:l.y, onBuilding:l.onBuilding }));
+      Labels.loadLabels(data.labels);
 
       // Gazon peint (une entrée par fragment de sol, dans le même ordre que
       // grassParts — reconstitué au chargement du .glb, donc déjà présent).
-      if(data.grass && data.grass.length && grassParts.length){
-        data.grass.forEach((dataUrl, i)=>{
-          const part = grassParts[i];
-          if(!part || !dataUrl) return;
-          const img = new Image();
-          img.onload = ()=>{
-            part.ctx.clearRect(0,0,part.canvas.width,part.canvas.height);
-            part.ctx.drawImage(img, 0, 0, part.canvas.width, part.canvas.height);
-            part.texture.needsUpdate = true;
-            updateSiteStats();
-          };
-          img.src = dataUrl;
-        });
-      }
+      Grass.loadGrass(data.grass);
 
       // Extension gare
       ExtGare.loadExtensionGare(data.extensionGare);
 
       rebuildAll(); renderList();
-      if(repairedCount) flashStatus(`${repairedCount} bâtiment(s) recalé(s) sur le polygone d'implantation`);
+      if(repairedCount) DrawTool.flashStatus(`${repairedCount} bâtiment(s) recalé(s) sur le polygone d'implantation`);
     }catch(err){ alert("Fichier de projet invalide."); }
   };
   reader.readAsText(file);
@@ -8767,7 +7167,7 @@ function reverseRoute(id){
     r.agents.forEach((a,i)=>{ a.t = i/r.agents.length; });
   }
   renderRouteList();
-  flashStatus(`Sens inversé : ${r.name}`);
+  DrawTool.flashStatus(`Sens inversé : ${r.name}`);
 }
 function renderRouteList(){
   const list = document.getElementById('route-list');
@@ -8990,8 +7390,8 @@ function tryAutoLoadDepart(){
       }
       createBuilding(pts, { name:b.name, floors:b.floors, bands:b.bands, noRoofInset:true, silent:true });
     });
-    (data.trees||[]).forEach(t=> addTree({x:t.x, y:0, z:t.z}));
-    (data.labels||[]).forEach(l=> addLabel(l.x, l.z, l.text, { locked:true, y:l.y, onBuilding:l.onBuilding }));
+    (data.trees||[]).forEach(t=> Trees.addTree({x:t.x, y:0, z:t.z}));
+    (data.labels||[]).forEach(l=> Labels.addLabel(l.x, l.z, l.text, { locked:true, y:l.y, onBuilding:l.onBuilding }));
     if(data.buildings && data.buildings.length){ rebuildAll(); renderList(); }
     console.info(`[Place de Milan] État de départ chargé (${DEPART_JSON_URL}) : ${(data.buildings||[]).length} bâtiment(s)${repairedCount?` (${repairedCount} recalé(s) sur le polygone)`:''}, ${(data.trees||[]).length} arbre(s), ${(data.labels||[]).length} label(s) admin.`);
   }).catch(()=>{
@@ -9008,8 +7408,8 @@ const clock = new THREE.Clock();
    OUTIL EXTENSION GARE — module externalisé (src/extension-gare.js).
    ============================================================ */
 ExtGare.initExtensionGare({
-  flashStatus, groundPointFromEvent, cancelDraw, closeDrawMenu,
-  stopTreeTool, stopGrassTool, stopLabelTool, stopEditBuildingShape
+  flashStatus: DrawTool.flashStatus, groundPointFromEvent, cancelDraw: DrawTool.cancelDraw, closeDrawMenu: DrawTool.closeDrawMenu,
+  stopTreeTool: Trees.stopTreeTool, stopGrassTool: Grass.stopGrassTool, stopLabelTool: Labels.stopLabelTool, stopEditBuildingShape
 });
 
 /* ============================================================
@@ -9038,14 +7438,14 @@ setupEyeToggle('eye-btn-extgare',
   ()=> ExtGare.getExtGareVisible(),
   (v)=> ExtGare.setExtGareVisible(v));
 setupEyeToggle('eye-btn-trees',
-  ()=> treesVisibleFlag,
-  (v)=>{ treesVisibleFlag = v; treesGroup.visible = v; });
+  ()=> Trees.getTreesVisible(),
+  (v)=> Trees.setTreesVisible(v));
 setupEyeToggle('eye-btn-grass',
-  ()=> grassVisibleFlag,
-  (v)=>{ grassVisibleFlag = v; grassParts.forEach(p=> p.overlayMesh.visible = v); });
+  ()=> Grass.getGrassVisible(),
+  (v)=> Grass.setGrassVisible(v));
 setupEyeToggle('eye-btn-labels',
-  ()=> labelsVisible,
-  (v)=>{ labelsVisible = v; labelGroup.visible = v; updateLabelPositions(); });
+  ()=> Labels.getLabelsVisible(),
+  (v)=> Labels.setLabelsVisible(v));
 
 function animate(){
   requestAnimationFrame(animate);
@@ -9063,17 +7463,14 @@ function animate(){
   // (grue posée, aucun étage encore sorti de terre) jusqu'au "Reprendre".
   if(!simulationPaused) updateConstructions(dt);
   updateCompass();
-  updateLabelPositions();
-  updateDrawAreaLabel();
+  Labels.updateLabelPositions();
+  DrawTool.updateDrawAreaLabel();
   ExtGare.updateExtGarePlusButtons();
   if(drawGuideGroup.visible){
     const t = performance.now()/1000;
     drawGuideRing.scale.setScalar((2.6 + Math.sin(t*3.2)*0.35)/2.6);
   }
-  if(grassCursorDecal && grassCursorDecal.visible){
-    const t = performance.now()/1000;
-    grassCursorDecal.material.opacity = 0.75 + Math.sin(t*4)*0.15;
-  }
+  Grass.pulseGrassCursor();
   if(CameraSkyline.skylineDirection){ CameraSkyline.renderSkylineView(); CameraSkyline.drawSkylineRuler(); }
   else if(planViewActive){ syncOrthoCameraForPlanView(); updateScreenSizedMarkers(); renderer.render(scene, orthoCamera); }
   else { updateScreenSizedMarkers(); renderer.render(scene, camera); }
