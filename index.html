@@ -406,6 +406,7 @@ import { dedupe, convexHullXZ } from './src/geometry-utils.js';
 import { findByNameCI, findAllByNameCI } from './src/scene-utils.js';
 import { NEON_BLUE, NEON_BLUE_CSS, FLOOR_HEIGHT, FLOOR_HEIGHTS, USAGE_COLORS, USAGE_LABELS, DEFAULT_USAGE } from './src/config.js';
 import { floorHeightFor, usageAtFloor, footprintForBand, buildingTotalHeight, buildingTotalFloorArea } from './src/building-utils.js';
+import { MOTIFS, MOTIF_PITCH_M, DEFAULT_FACADE_TINT, DEFAULT_MOTIF, MOTIF_KIND_INDEX } from './src/facade-motifs.js';
 import { treePlacing, treesGroup, grassPainting, labelGroup, labelsVisible, labels, drawing, drawMenuOpen } from './src/state.js';
 import * as ExtGare from './src/extension-gare.js';
 import * as CameraSkyline from './src/camera-skyline.js';
@@ -472,28 +473,14 @@ let glassEmissiveMaterials = []; // clones "glass" actuellement dans la scène (
 // "verre" (band.facadeMotif ne pilote que sa FORME, pas sa couleur — voir
 // uGlassColor plus bas, inchangé). Les commerces gardent leur propre logique
 // de grandes baies + enseigne (COMMERCE_* et buildGlassWindowGLSL()).
-const MOTIF_PITCH_M = 2.0; // largeur d'un motif/carreau de façade (m) — répété le long du mur
-const DEFAULT_FACADE_TINT = '#ede8db'; // teinte façade par défaut (blanc cassé), personnalisable par bloc
-const DEFAULT_MOTIF = 'portrait';
-
-// Chaque motif est décrit en MÈTRES RÉELS (indépendant de la hauteur d'étage,
-// convertie en fraction de cellule au moment du rendu — voir motifParamsFor())
-// pour que "carré" donne un VRAI carré à l'écran quel que soit l'usage :
-//   - rect: fenêtre rectangulaire droite {w,h,sill} (largeur/hauteur/hauteur d'allège, en m)
-//   - parallelogram: comme rect, mais avec un décalage horizontal du haut par
-//     rapport au bas ({skew}, en m) — fenêtre "inclinée"
-//   - arch: fenêtre en arche : corps rectangulaire {w,h,sill} surmonté d'un
-//     demi-cercle de rayon w/2
-const MOTIFS = {
-  carre:            { label:'Carré',                kind:'rect',           w:1.2, h:1.2, sill:0.9 },
-  carre_incline:    { label:'Carré incliné',         kind:'parallelogram',  w:1.2, h:1.2, sill:0.9, skew:0.35 },
-  portrait:         { label:'Rectangle portrait',    kind:'rect',           w:0.9, h:2.0, sill:0.6 },
-  paysage:          { label:'Rectangle paysage',     kind:'rect',           w:1.6, h:0.9, sill:1.05 },
-  paysage_incline:  { label:'Paysage incliné',       kind:'parallelogram',  w:1.6, h:0.9, sill:1.05, skew:0.35 },
-  arche:            { label:'Baie en arche',         kind:'arch',           w:1.1, h:1.55, sill:0.7 },
-  pleine_hauteur:   { label:'Baie pleine hauteur',   kind:'rect',           w:1.5, h:null, sill:0.15, topMargin:0.2 } // h calculé (sol→plafond)
-};
-// La forme du motif est désormais calculée DIRECTEMENT PAR FRAGMENT dans le
+// MOTIF_PITCH_M, DEFAULT_FACADE_TINT, DEFAULT_MOTIF, MOTIFS et
+// MOTIF_KIND_INDEX vivent maintenant dans ./src/facade-motifs.js (import en
+// haut du fichier) — c'est LE fichier à éditer pour changer la forme des
+// fenêtres (ajouter/retirer un motif, changer ses dimensions en mètres...).
+// Chaque motif y est décrit en MÈTRES RÉELS (indépendant de la hauteur
+// d'étage, convertie en fraction de cellule au moment du rendu ci-dessous)
+// pour que "carré" donne un VRAI carré à l'écran quel que soit l'usage.
+// La forme du motif est calculée DIRECTEMENT PAR FRAGMENT dans le
 // shader (voir buildGlassWindowGLSL), avec les mêmes formules "distance de
 // bord + smoothstep" déjà éprouvées pour les baies commerces plus bas — pas
 // de texture canvas intermédiaire. Une texture liée à un sampler2D partagé
@@ -505,7 +492,6 @@ const MOTIFS = {
 // fractions de cellule (largeur = fraction du pitch de 2 m, hauteurs =
 // fraction de la hauteur d'étage) — mêmes conventions que l'ancien gabarit
 // NEWBLDG_WINDOW_PARAMS et que la logique commerces ci-dessous.
-const MOTIF_KIND_INDEX = { rect:0, parallelogram:1, arch:2 };
 function motifParamsFor(motifId, floorHeightM){
   const def = MOTIFS[motifId] || MOTIFS[DEFAULT_MOTIF];
   const hResolved = def.h!=null ? def.h : Math.max(0.2, floorHeightM - def.sill - (def.topMargin||0));
