@@ -2,6 +2,7 @@
 // l'état de l'application — extrait d'index.html.
 
 export const NEON_BLUE = 0x2ee8ff;
+export const NEON_BLUE_CSS = '46,232,255'; // même couleur, en "r,g,b" pour rgba() CSS/canvas
 
 export const FLOOR_HEIGHT = 3.0; // metres — fallback générique
 // Hauteur d'étage réelle selon l'usage (mètres) : résidentiel 3m, hôtel 3.5m,

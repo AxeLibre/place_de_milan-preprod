@@ -35,11 +35,17 @@ export let hallMesh = null;
 export let extensionGareMesh = null;
 export let hallFacadeWorldNormal = null;
 
+export let ground = null;
+export let pointer = null;
+export let raycaster = null;
+
 export let treesGroup = null;
 export let quartierGroup = null;
 export let sun = null;
 export let hemiLight = null;
 export let labels = [];
+export let labelGroup = null;
+export let labelsVisible = true;
 
 export let drawing = false;
 export let drawMenuOpen = false;
@@ -74,11 +80,17 @@ export function setHallMesh(v){ hallMesh = v; }
 export function setExtensionGareMesh(v){ extensionGareMesh = v; }
 export function setHallFacadeWorldNormal(v){ hallFacadeWorldNormal = v; }
 
+export function setGround(v){ ground = v; }
+export function setPointer(v){ pointer = v; }
+export function setRaycaster(v){ raycaster = v; }
+
 export function setTreesGroup(v){ treesGroup = v; }
 export function setQuartierGroup(v){ quartierGroup = v; }
 export function setSun(v){ sun = v; }
 export function setHemiLight(v){ hemiLight = v; }
 export function setLabels(v){ labels = v; }
+export function setLabelGroup(v){ labelGroup = v; }
+export function setLabelsVisible(v){ labelsVisible = v; }
 
 export function setDrawing(v){ drawing = v; }
 export function setDrawMenuOpen(v){ drawMenuOpen = v; }
