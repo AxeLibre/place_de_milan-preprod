@@ -502,7 +502,18 @@ function motifParamsFor(motifId, floorHeightM){
     hFrac: hResolved / floorHeightM,
     sillFrac: def.sill / floorHeightM,
     skewFrac: (def.skew||0) / MOTIF_PITCH_M,
-    archRyFrac: archRadiusM / floorHeightM
+    archRyFrac: archRadiusM / floorHeightM,
+    // kind==='grid' : nombre de carreaux + épaisseur des croisillons (déjà
+    // exprimée en fraction de la largeur d'un carreau dans facade-motifs.js,
+    // donc directement utilisable côté shader, pas de conversion mètres→fraction)
+    cols: def.cols || 1,
+    rows: def.rows || 1,
+    mullionFrac: def.mullion || 0,
+    centerGapFrac: def.centerGap || 0,
+    // kind==='transom' : hauteur du bandeau haut convertie en fraction de la
+    // hauteur d'étage (même logique que sillFrac/hFrac ci-dessus)
+    transomHeightFrac: (def.transomHeight||0) / floorHeightM,
+    transomRows: def.transomRows || 2
   };
 }
 // Génère un aperçu SVG (façade + fenêtre) pour un motif — utilisé pour les
@@ -525,6 +536,35 @@ function motifSvgPreview(motifId, facadeHex){
   } else if(def.kind === 'arch'){
     const r = w/2, springY = yBot - h;
     shape = `<path d="M ${(cx-r).toFixed(1)} ${yBot.toFixed(1)} L ${(cx-r).toFixed(1)} ${springY.toFixed(1)} A ${r.toFixed(1)} ${r.toFixed(1)} 0 0 1 ${(cx+r).toFixed(1)} ${springY.toFixed(1)} L ${(cx+r).toFixed(1)} ${yBot.toFixed(1)} Z"/>`;
+  } else if(def.kind === 'grid'){
+    const cols = def.cols||1, rows = def.rows||1;
+    const barPx = Math.max(0.6, (def.mullion||0) * (w/cols));
+    const centerCol = (def.centerGap||0) > 0 ? Math.floor(cols/2) : -1;
+    let bars = `<rect x="${(cx-w/2).toFixed(1)}" y="${yTop.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="#7fa8c9"/>`;
+    for(let i=1;i<cols;i++){
+      const bw = i===centerCol ? barPx + (def.centerGap||0)*(w/cols) : barPx;
+      const lx = (cx-w/2) + (w*i/cols);
+      bars += `<rect x="${(lx-bw/2).toFixed(1)}" y="${yTop.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" fill="#0b1116"/>`;
+    }
+    for(let j=1;j<rows;j++){
+      const ly = yTop + (h*j/rows);
+      bars += `<rect x="${(cx-w/2).toFixed(1)}" y="${(ly-barPx/2).toFixed(1)}" width="${w.toFixed(1)}" height="${barPx.toFixed(1)}" fill="#0b1116"/>`;
+    }
+    shape = bars;
+  } else if(def.kind === 'transom'){
+    const transomH = def.transomHeight || 0;
+    const rows = Math.max(1, def.transomRows || 1);
+    const bandPx = h * (transomH / def.h);
+    const barPx = Math.max(0.5, 0.012 * (h/def.h) * 3.2 /* échelle indicative */);
+    let bars = `<rect x="${(cx-w/2).toFixed(1)}" y="${yTop.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="#7fa8c9"/>`;
+    // j va de 1 (première barre interne, juste sous le sommet de la fenêtre)
+    // à rows (barre limite bandeau/grand carreau du bas) — jamais de barre
+    // pile sur le bord haut de la fenêtre lui-même.
+    for(let j=1;j<=rows;j++){
+      const ly = yTop + (bandPx*j/rows);
+      bars += `<rect x="${(cx-w/2).toFixed(1)}" y="${(ly-barPx/2).toFixed(1)}" width="${w.toFixed(1)}" height="${barPx.toFixed(1)}" fill="#0b1116"/>`;
+    }
+    shape = bars;
   }
   return `<svg viewBox="0 0 ${VW} ${VH.toFixed(1)}" xmlns="http://www.w3.org/2000/svg">`+
     `<rect x="0" y="0" width="${VW}" height="${VH.toFixed(1)}" fill="${facadeHex}"/>`+
@@ -542,32 +582,33 @@ const COMMERCE_WIN_MARGIN_TOP_M = 0.12;  // marge en haut d'une baie pleine haut
 const COMMERCE_SIGN_GAP_M = 0.10;        // espace entre le vitrage bas et l'enseigne (m)
 const COMMERCE_SIGN_HEIGHT_M = 0.55;     // hauteur RÉELLE d'une enseigne (bandeau), pas toute la hauteur restante
 
-// Petite palette de teintes de verre "brillant" réalistes (bleu-gris,
-// bleu-vert, vert doux, bronze...) — une teinte est choisie par bâtiment/
-// tranche (seedStr) pour varier légèrement d'un immeuble à l'autre plutôt
-// qu'une seule couleur figée partout.
-const GLASS_TINTS = [
-  [0.55, 0.72, 0.80],
-  [0.50, 0.75, 0.78],
-  [0.62, 0.68, 0.62],
-  [0.70, 0.62, 0.48],
-  [0.58, 0.66, 0.75]
-];
-// Hash simple et stable (pas de dépendance externe) pour dériver un numéro de
-// variante déterministe à partir de l'identifiant du bâtiment + de la tranche
-// — deux rebuilds successifs du MÊME bâtiment gardent donc la même variante
-// (pas de scintillement du motif pendant une édition), mais deux bâtiments
-// différents ont de bonnes chances d'en tirer une différente.
-function hashStringToInt(str){
-  let h = 0;
-  for(let i=0; i<str.length; i++){ h = (h*31 + str.charCodeAt(i)) | 0; }
-  return Math.abs(h);
-}
+// Couleur des vitres des NOUVEAUX bâtiments : celle du matériau "glass" du
+// .glb (variable `glassMaterial`, repérée dans onSiteLoaded() via
+// findMaterialByName(siteRoot, 'glass')) — mêmes vitres que le bâti existant,
+// PAS une teinte différente par bâtiment. Ce triplet ne sert que de repli
+// tant que `glassMaterial` n'a pas encore été chargé/trouvé.
+const GLASS_COLOR_FALLBACK = [0.55, 0.72, 0.80];
 // Morceau de shader GLSL calculant, par fragment, si l'on est dans une baie
 // ("inWindow") et, pour les commerces, dans une enseigne ("inSign"). Les
 // variables cellId/cellUV (position dans la cellule baie×étage courante)
 // sont déjà calculées par l'appelant. `inWindow`/`inSign` sont déjà déclarées
 // (float) par l'appelant — ce morceau se contente de les affecter.
+// Combine plusieurs "barres" (croisillons/meneaux) en une seule expression
+// GLSL de distance signée (négatif = à l'intérieur d'une barre), par min()
+// successif — union exacte pour des bandes qui ne se chevauchent pas, avec
+// le même principe "distance de bord + smoothstep" que le reste du fichier.
+// `terms` est un tableau de chaînes GLSL déjà formées, ex.
+// "(abs(lx - 1.000000) - 0.030000)". Retourne un grand sentinel positif
+// (jamais "dans une barre") si `terms` est vide.
+function nestedMinGLSL(terms){
+  if(terms.length === 0) return '10.0';
+  return terms.reduceRight((acc, cur) => acc==null ? cur : `min(${cur}, ${acc})`, null);
+}
+// Épaisseur par défaut (fraction de la hauteur d'étage) des fines barres
+// horizontales d'un bandeau d'imposte (kind "transom") — pas de champ dédié
+// dans facade-motifs.js car purement esthétique/fixe, contrairement à
+// "mullion" (kind "grid") qui doit rester réglable par motif.
+const TRANSOM_BAR_FRAC = 0.012;
 function buildGlassWindowGLSL(usage, motifParams){
   if(usage === 'commerces'){
     return `
@@ -617,7 +658,7 @@ function buildGlassWindowGLSL(usage, motifParams){
   const S  = mp.sillFrac.toFixed(6);
   const SK = mp.skewFrac.toFixed(6);
   const AR = mp.archRyFrac.toFixed(6);
-  const K  = mp.kind;  // integer 0,1,2
+  const K  = mp.kind;  // integer 0..4 (rect, parallelogram, arch, grid, transom)
 
   if(K === 0){
     // rect : rectangle droit, centré
@@ -645,7 +686,7 @@ function buildGlassWindowGLSL(usage, motifParams){
     inSign = 0.0;
   }
 `;
-  } else {
+  } else if(K === 2){
     // arch : rectangle + demi-cercle
     return `
   {
@@ -667,9 +708,75 @@ function buildGlassWindowGLSL(usage, motifParams){
     inSign = 0.0;
   }
 `;
+  } else if(K === 3){
+    // grid : rectangle du motif (comme "rect") + croisillons internes en
+    // cols x rows carreaux, avec un meneau central plus épais optionnel
+    // (centerGap) pour simuler deux battants accolés plutôt qu'un simple
+    // petit-bois régulier.
+    const cols = motifParams && motifParams.cols || 1;
+    const rows = motifParams && motifParams.rows || 1;
+    const mullionFrac = (motifParams && motifParams.mullionFrac) || 0;
+    const centerGapFrac = (motifParams && motifParams.centerGapFrac) || 0;
+    const centerCol = centerGapFrac > 0 ? Math.floor(cols/2) : -1;
+    const bars = [];
+    for(let i=1;i<cols;i++){
+      const half = ((i===centerCol ? mullionFrac+centerGapFrac : mullionFrac) * 0.5).toFixed(6);
+      bars.push(`(abs(lx - ${i.toFixed(1)}) - ${half})`);
+    }
+    for(let j=1;j<rows;j++){
+      const half = (mullionFrac*0.5).toFixed(6);
+      bars.push(`(abs(ly - ${j.toFixed(1)}) - ${half})`);
+    }
+    const mullionExpr = nestedMinGLSL(bars);
+    return `
+  {
+    float xDist = abs(cellUV.x - 0.5) - ${W}*0.5;
+    float yDist = -min(cellUV.y - ${S}, (${S}+${H}) - cellUV.y);
+    float edge = max(xDist, yDist);
+    float aa = max(fwidth(edge), 0.001);
+    float inRect = 1.0 - smoothstep(-aa, aa, edge);
+    float lx = (cellUV.x - (0.5 - ${W}*0.5)) / max(${W}, 0.0001) * ${cols.toFixed(1)};
+    float ly = (cellUV.y - ${S}) / max(${H}, 0.0001) * ${rows.toFixed(1)};
+    float edgeMullion = ${mullionExpr};
+    float aaM = max(fwidth(edgeMullion), 0.001);
+    float onMullion = 1.0 - smoothstep(-aaM, aaM, edgeMullion);
+    inWindow = inRect * (1.0 - onMullion);
+    inSign = 0.0;
+  }
+`;
+  } else {
+    // transom (K === 4) : un grand carreau en bas + un bandeau en haut
+    // (hauteur transomHeightFrac) subdivisé en transomRows petites bandes —
+    // même principe que "grid" mais uniquement des barres horizontales, et
+    // non uniformément réparties sur toute la hauteur de la fenêtre.
+    const transomHeightFrac = (motifParams && motifParams.transomHeightFrac) || 0;
+    const transomRows = Math.max(1, (motifParams && motifParams.transomRows) || 1);
+    const sillFrac = motifParams ? motifParams.sillFrac : 0;
+    const hFrac = motifParams ? motifParams.hFrac : 0;
+    const yBoundary = sillFrac + hFrac - transomHeightFrac;
+    const bars = [];
+    for(let i=0;i<transomRows;i++){
+      const y = yBoundary + i*(transomHeightFrac/transomRows);
+      bars.push(`(abs(cellUV.y - ${y.toFixed(6)}) - ${(TRANSOM_BAR_FRAC*0.5).toFixed(6)})`);
+    }
+    const mullionExpr = nestedMinGLSL(bars);
+    return `
+  {
+    float xDist = abs(cellUV.x - 0.5) - ${W}*0.5;
+    float yDist = -min(cellUV.y - ${S}, (${S}+${H}) - cellUV.y);
+    float edge = max(xDist, yDist);
+    float aa = max(fwidth(edge), 0.001);
+    float inRect = 1.0 - smoothstep(-aa, aa, edge);
+    float edgeMullion = ${mullionExpr};
+    float aaM = max(fwidth(edgeMullion), 0.001);
+    float onMullion = 1.0 - smoothstep(-aaM, aaM, edgeMullion);
+    inWindow = inRect * (1.0 - onMullion);
+    inSign = 0.0;
+  }
+`;
   }
 }
-function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facadeTintHex, isGroundBand, bandBaseY){
+function glassMaterialFor(editing, floorHeightM, usage, seedStr /* non utilisé depuis le passage à la couleur "glass" du .glb, gardé pour compat. de signature */, motifId, facadeTintHex, isGroundBand, bandBaseY){
   usage = usage || DEFAULT_USAGE;
   floorHeightM = floorHeightM || 3;
   bandBaseY = bandBaseY || 0;
@@ -678,7 +785,13 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facade
   // Toujours calculé (même pour les commerces, qui l'ignorent) pour que
   // l'uniform ait systématiquement une valeur numérique valide.
   const motifParams = motifParamsFor(motifId || DEFAULT_MOTIF, floorHeightM);
-  const tint = GLASS_TINTS[hashStringToInt(seedStr || '') % GLASS_TINTS.length];
+  // Couleur de verre = celle du matériau "glass" du .glb (bâti existant),
+  // pas une teinte aléatoire par bâtiment (cf. GLASS_COLOR_FALLBACK plus
+  // haut). .clone() pour ne jamais partager l'objet Color avec le matériau
+  // source du .glb.
+  const glassColor = (glassMaterial && glassMaterial.color)
+    ? glassMaterial.color.clone()
+    : new THREE.Color(GLASS_COLOR_FALLBACK[0], GLASS_COLOR_FALLBACK[1], GLASS_COLOR_FALLBACK[2]);
   const allLit = GLASS_ALWAYS_LIT_USAGES.has(usage);
   const wallColor = new THREE.Color(facadeTintHex || DEFAULT_FACADE_TINT);
 
@@ -706,7 +819,7 @@ function glassMaterialFor(editing, floorHeightM, usage, seedStr, motifId, facade
     uIsGroundBand:  { value: isGroundBand ? 1.0 : 0.0 },
     uLitProb:       { value: allLit ? 1.0 : GLASS_WINDOW_LIT_PROB },
     uWallColor:     { value: wallColor },
-    uGlassColor:    { value: new THREE.Color(tint[0], tint[1], tint[2]) },
+    uGlassColor:    { value: glassColor },
     uWarmthRange:   { value: allLit ? 0 : 0.35 },
     uFloorBright:   { value: allLit ? 0.3 : 0.12 },
     uFloorHue:      { value: allLit ? 0.5 : 0.2 },
