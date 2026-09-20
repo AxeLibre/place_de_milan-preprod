@@ -406,8 +406,14 @@ import { dedupe, convexHullXZ } from './src/geometry-utils.js';
 import { findByNameCI, findAllByNameCI } from './src/scene-utils.js';
 import { NEON_BLUE, NEON_BLUE_CSS, FLOOR_HEIGHT, FLOOR_HEIGHTS, USAGE_COLORS, USAGE_LABELS, DEFAULT_USAGE } from './src/config.js';
 import { floorHeightFor, usageAtFloor, footprintForBand, buildingTotalHeight, buildingTotalFloorArea } from './src/building-utils.js';
-import { MOTIFS, MOTIF_PITCH_M, DEFAULT_FACADE_TINT, DEFAULT_MOTIF, MOTIF_KIND_INDEX } from './src/facade-motifs.js';
-import { treePlacing, treesGroup, grassPainting, labelGroup, labelsVisible, labels, drawing, drawMenuOpen } from './src/state.js';
+// Le "?v=2" force le navigateur (et le CDN GitHub Pages) à voir ce fichier
+// comme une ressource différente à chaque fois que son contenu change —
+// sans ça, un simple F5 réutilise souvent une version en cache du module
+// (comportement fréquent avec les imports ES modules) même après avoir bien
+// remplacé le fichier sur le serveur. PENSE À INCRÉMENTER CE NUMÉRO À CHAQUE
+// FOIS QUE TU MODIFIES facade-motifs.js, sinon le problème reviendra.
+import { MOTIFS, MOTIF_PITCH_M, DEFAULT_FACADE_TINT, DEFAULT_MOTIF, MOTIF_KIND_INDEX } from './src/facade-motifs.js?v=2';
+import { treePlacing, treesGroup, grassPainting, labelGroup, labelsVisible, labels, drawing, drawMenuOpen, labelPlacing } from './src/state.js';
 import * as ExtGare from './src/extension-gare.js';
 import * as CameraSkyline from './src/camera-skyline.js';
 import * as CameraArchitect from './src/camera-architect.js';
