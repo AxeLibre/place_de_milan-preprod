@@ -27,13 +27,13 @@
 import * as THREE from "three";
 import { worldRoot } from './state.js';
 
-export const POOL_SIZE = 12;
+export const POOL_SIZE = 8;
 const FADE_SECONDS = 0.3;
 const OUT_OF_VIEW_PENALTY = 6;      // multiplicateur de distance² pour une source hors champ
 const HYSTERESIS = 0.7;             // une source déjà allumée garde sa place tant que score×0.7 reste dans le top N
 const POOL_CAPACITY = 128;          // nombre max de flaques (sources)
 const MAX_INTENSITY = 60;           // plus forte intensité gérée (sert au calcul de la vitesse de fondu)
-const PUDDLE_STRENGTH = 1.25;       // luminosité des flaques (réglable : plus haut = sol plus éclairé)
+const PUDDLE_STRENGTH = 5;          // luminosité des flaques (réglable : plus haut = sol plus éclairé)
 const PUDDLE_LIT_DIMMING = 0.6;     // atténuation de la flaque quand une vraie lumière éclaire déjà cette zone
 const PUDDLE_LIFT = 0.06;           // m au-dessus du sol, évite le z-fighting
 
@@ -48,20 +48,24 @@ const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vec
 function puddleRadius(s){ return 5 + Math.sqrt(Math.max(1, s.intensity)) * 3.6; }
 
 function makePuddleTexture(){
+  // Dégradé en NIVEAUX DE GRIS opaque (et non en transparence) : la flaque est
+  // rendue en mélange multiplicatif (voir initNightLights), dont le facteur
+  // vient de la couleur du texel — 1 = pleine lumière, 0 = aucune.
   const c = document.createElement('canvas'); c.width = c.height = 128;
   const g = c.getContext('2d');
   const grad = g.createRadialGradient(64,64,0, 64,64,64);
   // Profil proche d'une décroissance physique (fort au pied du mât, doux sur
   // les bords), nul au bord de la texture.
-  grad.addColorStop(0.00, 'rgba(255,255,255,1)');
-  grad.addColorStop(0.15, 'rgba(255,255,255,.72)');
-  grad.addColorStop(0.35, 'rgba(255,255,255,.36)');
-  grad.addColorStop(0.60, 'rgba(255,255,255,.12)');
-  grad.addColorStop(0.85, 'rgba(255,255,255,.03)');
-  grad.addColorStop(1.00, 'rgba(255,255,255,0)');
+  grad.addColorStop(0.00, '#ffffff');
+  grad.addColorStop(0.15, '#b8b8b8');
+  grad.addColorStop(0.35, '#5c5c5c');
+  grad.addColorStop(0.60, '#1f1f1f');
+  grad.addColorStop(0.85, '#080808');
+  grad.addColorStop(1.00, '#000000');
+  g.fillStyle = '#000'; g.fillRect(0,0,128,128);
   g.fillStyle = grad; g.fillRect(0,0,128,128);
   const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
+  t.colorSpace = THREE.NoColorSpace; // valeurs linéaires : le profil dessiné est celui appliqué
   return t;
 }
 
@@ -78,9 +82,16 @@ export function initNightLights(){
   }
   const geo = new THREE.PlaneGeometry(1, 1);
   geo.rotateX(-Math.PI/2);
+  // Mélange MULTIPLICATIF : résultat = sol × (1 + lumière). C'est ce que fait
+  // une vraie lumière (éclairement × couleur du sol) — la flaque a donc la même
+  // teinte chaude que la lampe éclairée, alors qu'un mélange additif y ajoutait
+  // la couleur brute de la lampe (qui virait au blanc/froid après le tone
+  // mapping). Pas de brouillard propre : le sol qu'elle éclaire est déjà brumeux.
   const mat = new THREE.MeshBasicMaterial({
-    map: makePuddleTexture(), color: 0xffffff, transparent: true, depthWrite: false,
-    blending: THREE.AdditiveBlending, fog: true,
+    map: makePuddleTexture(), color: 0xffffff, transparent: true, depthWrite: false, fog: false,
+    blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+    blendSrc: THREE.DstColorFactor, blendDst: THREE.OneFactor,
+    blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
   puddles = new THREE.InstancedMesh(geo, mat, POOL_CAPACITY);
