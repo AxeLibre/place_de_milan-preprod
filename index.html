@@ -1139,6 +1139,65 @@ function applyStaticWindowEmissive(){
   const on = (typeof isNight!=='undefined' && isNight) || (window.isNight===true);
   staticWindowMaterials.forEach(({uniforms})=>{ uniforms.uNightWin.value = on ? GLASS_WINDOW_EMISSIVE_INTENSITY : 0; });
 }
+// Fenêtres allumées la nuit pour la maquette GLOBALE (global.glb) : mêmes
+// shaders que le bâti de place_de_milan (voir makeStaticNightWindowMaterial),
+// ajoutés à staticWindowMaterials SANS le réinitialiser (setupStaticWindowMaterials
+// repart de zéro pour place_de_milan). Les noms sont ceux de global.glb.
+function setupGlobalWindowMaterials(root){
+  const specs = {
+    'glass':            { pitch:1, floorH:3,   winW:0.72, winH:1.5,  litProb:1.0, color:[1.0,0.86,0.58] },
+    'glass.001':        { pitch:1, floorH:3,   winW:0.65, winH:1.3,  litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.86,0.58] },
+    'glass_fenetre':    { pitch:1, floorH:3,   winW:0.65, winH:1.3,  litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.86,0.58] },
+    'BATIMENTS_fenetre':{ pitch:2, floorH:2.5, winW:0.65, winH:0.85, litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.82,0.5] },
+    'glass_carre':      { pitch:3, floorH:3,   winW:2.5,  winH:2.5,  litProb:1.0, color:[1.0,1.0,1.0] },
+  };
+  const bySpec = {}; // nom -> [matériaux d'origine]
+  root.traverse(o=>{
+    if(!o.isMesh) return;
+    (Array.isArray(o.material) ? o.material : [o.material]).forEach(m=>{
+      if(!m || !m.isMeshStandardMaterial || (m.userData && m.userData.nightWindowUniforms)) return;
+      const key = (m.name||'');
+      if(specs[key]) (bySpec[key] = bySpec[key] || new Set()).add(m);
+    });
+  });
+  const replacements = new Map();
+  Object.entries(bySpec).forEach(([key, set])=>{
+    const list = [...set];
+    const shaded = makeStaticNightWindowMaterial(list[0], specs[key]); // un shader partagé par toutes les instances de ce nom
+    list.forEach(m=> replacements.set(m, shaded));
+  });
+  if(!replacements.size) return;
+  root.traverse(o=>{
+    if(!o.isMesh) return;
+    if(Array.isArray(o.material)) o.material = o.material.map(mm=> replacements.get(mm) || mm);
+    else if(replacements.has(o.material)) o.material = replacements.get(o.material);
+  });
+  applyStaticWindowEmissive();
+}
+// Lumières "global-light" de global.glb : LOD SEULEMENT (une flaque de lumière
+// au sol, jamais de vraie lumière ni de candidat au pool) — il peut y en avoir
+// des centaines sans aucun coût par pixel. Objet ou lumière ponctuelle nommé
+// "global-light" (Blender ajoute ".001"... que l'export glTF retire), à
+// n'importe quelle hauteur : le sol est mesuré sous chacune.
+let globalLightSeq = 0;
+function collectGlobalLights(root){
+  NightLights.unregisterSourcesWithPrefix('global:');
+  root.updateMatrixWorld(true);
+  const used = new Set();
+  let count = 0;
+  root.traverse(o=>{
+    if(!/^global[-_ ]?light/i.test(o.name||'')) return;
+    for(let p=o.parent; p && p!==root; p=p.parent){ if(used.has(p)) return; } // enfant d'une source déjà prise
+    used.add(o);
+    const wp = o.getWorldPosition(new THREE.Vector3());
+    worldRoot.worldToLocal(wp);
+    let color = 0xffd17c;
+    o.traverse(c=>{ if(c.isLight){ color = c.color.getHex(); c.visible = false; c.castShadow = false; } }); // jamais une vraie lumière
+    NightLights.registerSource('global:' + globalLightSeq++, wp, { color, intensity:18, groundY:groundYUnder(wp, [root, siteRoot]), lodOnly:true });
+    count++;
+  });
+  if(count) console.info(`[Place de Milan] ${count} lumière(s) "global-light" (global.glb) : disques de lumière uniquement.`);
+}
 
 /* ============================================================
    SCENE
@@ -1866,7 +1925,7 @@ function applyHeightFog(root){
    reculée pour cadrer l'ensemble, avec un éclairage forcé "équinoxe midi" et
    un plancher infranchissable (on ne peut pas passer sous la maquette).
    ------------------------------------------------------------ */
-function loadGlobalGlbIfNeeded(cb){
+function loadGlobalGlbIfNeeded(cb, silent){
   if(globalGlbLoaded){ cb(true); return; }
   gltfLoader.load(GLOBAL_GLB_URL, (gltf)=>{
     globalRoot.add(gltf.scene);
@@ -1882,13 +1941,24 @@ function loadGlobalGlbIfNeeded(cb){
     gltf.scene.traverse(o=>{ if(o.isMesh){ o.castShadow = true; o.receiveShadow = true; } });
     const box = new THREE.Box3().setFromObject(globalRoot);
     if(!box.isEmpty()) globalFloorY = box.min.y;
+    // La globale est désormais la maquette de BASE (affichée en permanence sous
+    // place_de_milan) : elle reçoit donc le même traitement nuit/perf que celle-ci.
+    forceDoubleSided(globalRoot);
+    setupGlobalWindowMaterials(globalRoot); // fenêtres allumées la nuit
+    simplifyGroundMaterials(globalRoot);    // sol/arbres en éclairage simple (+ ambiante de remplacement)
+    collectGlobalLights(globalRoot);        // lumières "global-light" : disques seulement
     globalGlbLoaded = true;
     cb(true);
   }, undefined, (err)=>{
     console.warn("Chargement de global.glb impossible :", err);
-    alert("Impossible de charger global.glb — vérifie qu'il est bien placé exactement à côté de index.html, avec ce nom précis (respecte la casse).");
+    if(!silent) alert("Impossible de charger global.glb — vérifie qu'il est bien placé exactement à côté de index.html, avec ce nom précis (respecte la casse).");
     cb(false);
   });
+}
+// Chargement automatique au démarrage : la globale est la maquette de base,
+// visible en permanence ; place_de_milan.glb reste chargée par-dessus.
+function loadGlobalBase(){
+  loadGlobalGlbIfNeeded((ok)=>{ if(ok) globalRoot.visible = true; }, true);
 }
 // Recule/hausse la caméra pour cadrer l'ensemble de la maquette globale
 // (englobe aussi le site de base + nouveaux bâtiments, tous sous worldRoot,
@@ -2016,7 +2086,7 @@ function exitGlobalView(){
   btnGlobalView.classList.remove('active');
   globalViewCloseBar.classList.remove('show');
   keysDown.clear();
-  globalRoot.visible = false;
+  globalRoot.visible = globalGlbLoaded; // maquette de base : reste affichée
   treesGroup.visible = Trees.getTreesVisible(); // restaure l'état normal (œil "Arbre")
   siteRoot.traverse(o=>{ if(/icosph/i.test(o.name||'')) o.visible = true; });
   // Retour au rendu normal (coloration par usage si "Légendes" était actif
@@ -2942,6 +3012,7 @@ function loadSiteFromGLB(url, onFail){
     // ne s'affiche plus au chargement de la page (gênante à chaque visite) ;
     // le diagnostic reste disponible dans la console pour le débogage.
     console.info(`[Place de Milan] Maquette chargée (${url})${corrected ? ' — rotation Z-up→Y-up appliquée automatiquement' : ''}. ${report}`);
+    loadGlobalBase(); // maquette globale (base), chargée après le site
     tryAutoLoadRoutes(); // toujours après la maquette : évite que son résultat soit écrasé par l'import auto (souvent infructueux) des Route_* du .glb
     tryAutoLoadDepart(); // idem : a besoin de buildZone (Polygone_Implantation) déjà en place
   }, undefined, (err)=>{
@@ -6206,10 +6277,10 @@ let siteLightSeq = 0;
 const _lampRay = new THREE.Raycaster();
 const _lampRayDir = new THREE.Vector3(0,-1,0);
 const _lampRayN = new THREE.Vector3();
-function groundYUnder(wp){
+function groundYUnder(wp, roots){
   _lampRay.set(new THREE.Vector3(wp.x, wp.y + 0.3, wp.z), _lampRayDir);
   _lampRay.far = 40;
-  const hits = _lampRay.intersectObject(siteRoot, true);
+  const hits = _lampRay.intersectObjects(roots || [siteRoot], true);
   for(const h of hits){
     if(h.distance < 0.8 || !h.face) continue;
     _lampRayN.copy(h.face.normal).transformDirection(h.object.matrixWorld);
@@ -6284,12 +6355,29 @@ let lightingMode = 'jour'; // 'jour' | 'nuit'
 let isNight = false;
 let currentHour = 12; // heure solaire vraie courante (mode jour)
 
+// Décalage soleil → cible (repère monde) : le rectangle d'ombre (±180 m) SUIT le
+// point regardé au lieu de rester centré sur l'origine — indispensable depuis
+// que la maquette globale (bien plus étendue que la place) est la base.
+const sunOffset = new THREE.Vector3(120, 200, 60);
+const SUN_SHADOW_SNAP = 1.0; // m : la cible saute par pas, pour que les ombres ne "scintillent" pas en se déplaçant
+function updateSunShadowFollow(){
+  if(isNight || !sun.visible) return;
+  const f = (pedestrianModeActive) ? camera.position : controls.target;
+  const fx = Math.round(f.x / SUN_SHADOW_SNAP) * SUN_SHADOW_SNAP;
+  const fz = Math.round(f.z / SUN_SHADOW_SNAP) * SUN_SHADOW_SNAP;
+  if(sun.target.position.x === fx && sun.target.position.z === fz && sun.position.x === fx + sunOffset.x) return;
+  sun.target.position.set(fx, 0, fz);
+  sun.target.updateMatrixWorld();
+  sun.position.set(fx + sunOffset.x, sunOffset.y, fz + sunOffset.z);
+}
 function positionSunForHour(hourDecimal){
   const { alt, az } = sunAltAz(hourDecimal, SEASONS[currentSeason].declDeg);
   const x = SUN_DISTANCE * Math.cos(alt) * Math.sin(az);
   const z = -SUN_DISTANCE * Math.cos(alt) * Math.cos(az); // Nord réel = -Z (Blender +Y), d'où le signe négatif
   const y = Math.max(8, SUN_DISTANCE * Math.sin(alt)); // jamais totalement à plat, même lever/coucher
   sun.position.set(x, y, z);
+  sunOffset.set(x, y, z);
+  sun.target.position.set(0, 0, 0); sun.target.updateMatrixWorld(); // repart de l'origine ; updateSunShadowFollow() recale à chaque image
   // L'intensité et la teinte suivent la hauteur réelle du soleil : rasant et
   // chaud (orangé) au lever/coucher, franc et plus neutre à midi. On se cale
   // sur la hauteur max de l'été à Lyon (~67.7°) pour normaliser t sur 0..1
@@ -7289,6 +7377,7 @@ function instantiateVehiclePart(cfg, wagonIndex){
         m.color.setHex(hex);
         carPaletteMaterials[hex] = m;
       }
+      obj.userData.bodyHex = hex; // couleur de carrosserie, reprise par le LOD lointain (voir ensureVehicleLod)
       const carMat = carPaletteMaterials[hex];
       if(carMat){
         obj.traverse(o=>{
@@ -7411,6 +7500,15 @@ const PED_LOD_CAPACITY = 1500;
 let pedLod = null; // { group, meshes:[legs,torso,head], free:[slots], shown:Uint8Array }
 const _pedM = new THREE.Matrix4(), _pedS = new THREE.Vector3(1,1,1), _pedZero = new THREE.Matrix4().makeScale(0,0,0);
 const _pedC = new THREE.Color();
+// Un InstancedMesh dessine `count` instances : on ne dessine que jusqu'au plus
+// haut slot réellement attribué (pas les 800/1500 emplacements de capacité, qui
+// coûteraient autant de triangles dégénérés inutiles).
+function lodBump(lod, slot){
+  if(slot + 1 > lod.hi){
+    lod.hi = slot + 1;
+    lod.meshes.forEach(m=>{ m.count = lod.hi; });
+  }
+}
 function ensurePedestrianLod(){
   if(pedLod || !peopleTemplate) return pedLod;
   // Silhouette calquée sur le VRAI modèle : une boîte par segment du gabarit
@@ -7459,7 +7557,7 @@ function ensurePedestrianLod(){
     m.userData.role = role;
     m.castShadow = false; m.receiveShadow = false;
     m.frustumCulled = false; // les instances sont partout : pas de sphère englobante utile
-    m.count = PED_LOD_CAPACITY;
+    m.count = 0; // ajusté au nombre de slots réellement utilisés (voir lodBump)
     for(let i=0;i<PED_LOD_CAPACITY;i++){ m.setMatrixAt(i, _pedZero); m.setColorAt(i, _pedC.setHex(0x888888)); }
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     return m;
@@ -7468,7 +7566,7 @@ function ensurePedestrianLod(){
   meshes.forEach(m=> group.add(m));
   worldRoot.add(group);
   const free = []; for(let i=PED_LOD_CAPACITY-1;i>=0;i--) free.push(i);
-  pedLod = { group, meshes, free, shown: new Uint8Array(PED_LOD_CAPACITY) };
+  pedLod = { group, meshes, free, hi:0, shown: new Uint8Array(PED_LOD_CAPACITY) };
   return pedLod;
 }
 function pedestrianLodSet(slot, position, quaternion, colors){
@@ -7496,17 +7594,134 @@ function pedestrianLodRelease(agent){
   agent.lodSlot = null;
 }
 function releaseRoutePedestrians(r){
-  if(r && r.type === 'pieton') r.agents.forEach(pedestrianLodRelease);
+  if(!r) return;
+  if(r.type === 'pieton') r.agents.forEach(pedestrianLodRelease);
+  else r.agents.forEach(vehicleLodRelease);
 }
 // Le groupe de silhouettes suit la visibilité des voies de piétons (case à
 // cocher "Piétons", mode Architecte, Vue Globale...) — voir
 // applyAgentTypeVisibility() et activateGlobalView().
 function syncPedestrianLodVisibility(){
   if(pedLod) pedLod.group.visible = routes.some(r=> r.type==='pieton' && r.vehicleGroup.visible);
+  for(const key in vehLods){
+    const lod = vehLods[key];
+    lod.group.visible = routes.some(r=> ROUTE_TYPES[r.type] && ROUTE_TYPES[r.type].part===key && r.vehicleGroup.visible);
+    lod.lights.visible = isNight; // feux des véhicules lointains : allumés la nuit seulement
+  }
 }
+
+/* ------------------------------------------------------------
+   LOD DES VÉHICULES (voitures, bus) — PERFORMANCE.
+   Chaque voiture/bus = 5 à 7 maillages. Au-delà de VEH_FULL_DIST de la
+   caméra, un véhicule est rendu par UNE silhouette fusionnée du modèle réel :
+   3 InstancedMesh par type (carrosserie à la couleur du véhicule, détails aux
+   couleurs de leurs matériaux, feux — allumés la nuit), partagés par tous les
+   véhicules lointains. Même mécanique de slots que les piétons.
+   ------------------------------------------------------------ */
+const VEH_FULL_DIST = 110, VEH_FULL_HYST = 10;
+const VEH_FULL_DIST_SQ = VEH_FULL_DIST*VEH_FULL_DIST;
+const VEH_FULL_FAR_SQ = (VEH_FULL_DIST+VEH_FULL_HYST)*(VEH_FULL_DIST+VEH_FULL_HYST);
+const VEH_LOD_CAPACITY = 800;
+const vehLods = {}; // 'voiture' | 'bus' -> { group, body, detail, lights, meshes, free, shown }
+function ensureVehicleLod(key){
+  if(vehLods[key]) return vehLods[key];
+  const template = vehicleTemplates && vehicleTemplates[key];
+  if(!template) return null;
+  const bodyMat = vehicleBodyMaterials[key];
+  const t = template.clone(true); t.position.set(0,0,0); t.quaternion.identity(); t.updateMatrixWorld(true);
+  const parts = { body:[], detail:[], lights:[] };
+  t.traverse(o=>{
+    if(!o.isMesh || !o.geometry) return;
+    const m = Array.isArray(o.material) ? o.material[0] : o.material;
+    if(!m) return;
+    const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
+    g.applyMatrix4(o.matrixWorld); // pose du segment dans le repère du véhicule (échelle du gabarit incluse)
+    const clean = new THREE.BufferGeometry();
+    clean.setAttribute('position', g.attributes.position);
+    if(g.attributes.normal) clean.setAttribute('normal', g.attributes.normal);
+    else clean.computeVertexNormals();
+    const isBody = !!bodyMat && m === bodyMat;
+    const isLight = /phare/i.test(m.name || '');
+    if(!isBody){
+      // Couleur du matériau d'origine figée en couleur de sommet ; un feu émet
+      // (blanc/rouge) : on prend sa couleur d'émission si elle existe.
+      const col = (isLight && m.emissive && m.emissive.getHex() !== 0) ? m.emissive : m.color;
+      const arr = new Float32Array(clean.attributes.position.count * 3);
+      for(let i=0;i<arr.length;i+=3){ arr[i]=col.r; arr[i+1]=col.g; arr[i+2]=col.b; }
+      clean.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+    }
+    (isBody ? parts.body : isLight ? parts.lights : parts.detail).push(clean);
+  });
+  const mk = (list, material, cast)=>{
+    if(!list.length) return null;
+    const geo = mergeGeometries(list, false);
+    if(!geo) return null;
+    const m = new THREE.InstancedMesh(geo, material, VEH_LOD_CAPACITY);
+    m.frustumCulled = false; m.castShadow = cast; m.receiveShadow = cast;
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    for(let i=0;i<VEH_LOD_CAPACITY;i++) m.setMatrixAt(i, _pedZero);
+    m.count = 0; // ajusté au nombre de slots réellement utilisés (voir lodBump)
+    return m;
+  };
+  const body = mk(parts.body, new THREE.MeshLambertMaterial({ color:0xffffff }), true);
+  const detail = mk(parts.detail, new THREE.MeshLambertMaterial({ vertexColors:true }), true);
+  const lights = mk(parts.lights, new THREE.MeshBasicMaterial({ vertexColors:true, toneMapped:false }), false);
+  if(body) for(let i=0;i<VEH_LOD_CAPACITY;i++) body.setColorAt(i, _pedC.setHex(0x888888));
+  const group = new THREE.Group(); group.name = 'vehicleLod_' + key;
+  [body, detail, lights].forEach(m=>{ if(m) group.add(m); });
+  worldRoot.add(group);
+  const free = []; for(let i=VEH_LOD_CAPACITY-1;i>=0;i--) free.push(i);
+  const lod = { group, body, detail, lights: lights || { visible:false }, meshes:[body, detail, lights].filter(Boolean), free, hi:0, shown:new Uint8Array(VEH_LOD_CAPACITY) };
+  vehLods[key] = lod;
+  return lod;
+}
+function vehicleLodHide(lod, slot){
+  if(!lod.shown[slot]) return;
+  lod.meshes.forEach(m=> m.setMatrixAt(slot, _pedZero));
+  lod.shown[slot] = 0;
+}
+function vehicleLodRelease(agent){
+  if(agent.lodSlot === undefined || agent.lodSlot === null || !agent.lodKey) return;
+  const lod = vehLods[agent.lodKey];
+  if(lod){ vehicleLodHide(lod, agent.lodSlot); lod.meshes.forEach(m=>{ m.instanceMatrix.needsUpdate = true; }); lod.free.push(agent.lodSlot); }
+  agent.lodSlot = null;
+}
+// Un véhicule (voiture/bus) : rig complet de près, silhouette instanciée de
+// loin. Retourne true si des instances ont changé (à téléverser).
+function tickVehicleLod(a, r, m, camPos){
+  if(a.lodSlot === undefined){
+    const key = ROUTE_TYPES[r.type] && ROUTE_TYPES[r.type].part;
+    const lod = key ? ensureVehicleLod(key) : null;
+    if(lod && lod.free.length){ a.lodSlot = lod.free.pop(); a.lodKey = key; lodBump(lod, a.lodSlot); } else a.lodSlot = null;
+  }
+  if(a.lodSlot === null) return false;
+  const lod = vehLods[a.lodKey];
+  const d2 = m.position.distanceToSquared(camPos);
+  if(d2 < (m.visible ? VEH_FULL_FAR_SQ : VEH_FULL_DIST_SQ)){
+    if(!m.visible) m.visible = true;
+    if(lod.shown[a.lodSlot]){ vehicleLodHide(lod, a.lodSlot); return true; }
+    return false;
+  }
+  if(m.visible) m.visible = false;
+  _pedM.compose(m.position, m.quaternion, _pedS);
+  lod.meshes.forEach(mm=> mm.setMatrixAt(a.lodSlot, _pedM));
+  if(lod.body){
+    // Voiture : couleur de carrosserie du véhicule ; bus : matériau partagé (recolorable en direct).
+    if(m.userData.bodyHex !== undefined) lod.body.setColorAt(a.lodSlot, _pedC.setHex(m.userData.bodyHex));
+    else if(vehicleBodyMaterials[a.lodKey]) lod.body.setColorAt(a.lodSlot, vehicleBodyMaterials[a.lodKey].color);
+  }
+  lod.shown[a.lodSlot] = 1;
+  return true;
+}
+// Nombre maximal de piétons en rig ANIMÉ complet (les plus proches de la caméra),
+// quelle que soit la taille de la foule : ~0,1 ms chacun (12 draw calls + mixer),
+// donc le coût des piétons proches reste borné même avec beaucoup de voies.
+const PED_MAX_FULL_RIGS = 70;
+const _pedCand = [];
 function tickAgents(dt){
   syncPedestrianLodVisibility();
-  let lodTouched = false;
+  let lodTouched = false, vehTouched = false;
+  _pedCand.length = 0;
   for(const r of routes){
     const len = r.curve.getLength();
     if(len<=0) continue;
@@ -7518,6 +7733,7 @@ function tickAgents(dt){
     } else {
       r.speedFactor = 1;
     }
+    const isVehLod = (r.type==='voiture' || r.type==='bus');
     r.agents.forEach((a)=>{
       a.t = (a.t + (r.speedFactor*a.speed*dt)/len) % 1;
       // le wagon n'est jamais exactement à a.t : il traîne derrière de
@@ -7536,32 +7752,50 @@ function tickAgents(dt){
         m.position.addScaledVector(side, lateral);
       }
       m.lookAt(m.position.clone().add(tangent));
-      // Culling par distance : pour les piétons trop loin de la caméra, on
-      // saute la mise à jour du mixer (coûteuse : skinning du squelette)
-      // sans arrêter le déplacement du personnage sur sa route.
       if(r.type==='pieton'){
-        // LOD : rig animé complet de près, silhouette instanciée de loin.
+        // LOD : le choix rig animé / silhouette se fait APRÈS la boucle, une fois
+        // tous les piétons placés (plafond PED_MAX_FULL_RIGS sur les plus proches).
         if(a.lodSlot === undefined){
           const lod = ensurePedestrianLod();
           a.lodSlot = (lod && lod.free.length) ? lod.free.pop() : null; // null : pas de LOD (rig complet en permanence)
+          if(a.lodSlot !== null) lodBump(lod, a.lodSlot);
         }
-        const d2 = m.position.distanceToSquared(camera.position);
-        const near = a.lodSlot === null || d2 < (m.visible ? PED_FULL_RIG_FAR_SQ : PED_FULL_RIG_DIST_SQ);
-        if(near){
-          if(!m.visible) m.visible = true;
-          if(a.lodSlot !== null && pedLod.shown[a.lodSlot]){ pedestrianLodHide(a.lodSlot); lodTouched = true; }
-          if(a.mixer) a.mixer.update(dt); // avance le cycle de marche (bras/jambes) du piéton
-        } else {
-          if(m.visible) m.visible = false;
-          pedestrianLodSet(a.lodSlot, m.position, m.quaternion, m.userData.pedColors);
-          lodTouched = true;
-        }
+        _pedCand.push({ a, m, d2: m.position.distanceToSquared(camera.position) });
+      } else if(isVehLod){
+        if(tickVehicleLod(a, r, m, camera.position)) vehTouched = true;
       } else if(a.mixer){
         a.mixer.update(dt);
       }
     });
   }
+  if(_pedCand.length){
+    // Les piétons déjà en rig complet sont légèrement favorisés au classement
+    // (hystérésis : pas de va-et-vient entre deux piétons à égale distance).
+    for(const c of _pedCand) c.score = c.m.visible ? c.d2 * 0.6 : c.d2;
+    _pedCand.sort((x, y)=> x.score - y.score);
+    let fullRigs = 0;
+    for(const c of _pedCand){
+      const a = c.a, m = c.m;
+      const inRange = c.d2 < (m.visible ? PED_FULL_RIG_FAR_SQ : PED_FULL_RIG_DIST_SQ);
+      const near = a.lodSlot === null || (fullRigs < PED_MAX_FULL_RIGS && inRange);
+      if(near){
+        fullRigs++;
+        if(!m.visible) m.visible = true;
+        if(a.lodSlot !== null && pedLod.shown[a.lodSlot]){ pedestrianLodHide(a.lodSlot); lodTouched = true; }
+        if(a.mixer) a.mixer.update(dt); // avance le cycle de marche (bras/jambes) du piéton
+      } else {
+        if(m.visible) m.visible = false;
+        pedestrianLodSet(a.lodSlot, m.position, m.quaternion, m.userData.pedColors);
+        lodTouched = true;
+      }
+    }
+  }
   if(lodTouched) pedLod.meshes.forEach(mm=>{ mm.instanceMatrix.needsUpdate = true; });
+  if(vehTouched) for(const key in vehLods){
+    const lod = vehLods[key];
+    lod.meshes.forEach(mm=>{ mm.instanceMatrix.needsUpdate = true; });
+    if(lod.body && lod.body.instanceColor) lod.body.instanceColor.needsUpdate = true;
+  }
 }
 
 // Un train ne boucle pas en continu sur sa voie comme les autres véhicules :
@@ -7972,6 +8206,7 @@ function animate(){
   // (grue posée, aucun étage encore sorti de terre) jusqu'au "Reprendre".
   if(!simulationPaused) updateConstructions(dt);
   updateNightLightsFocus(dt);
+  updateSunShadowFollow();
   updateCompass();
   Labels.updateLabelPositions();
   DrawTool.updateDrawAreaLabel();
