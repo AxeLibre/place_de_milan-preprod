@@ -7394,7 +7394,7 @@ const PIETON_ANIM_CULL_DIST_SQ = 55*55; // (ancien seuil, conservé pour référ
 // PED_FULL_RIG_DIST + PED_FULL_RIG_HYST il passe en silhouette (hystérésis : pas
 // de va-et-vient au seuil). Plus grand = plus joli de loin, plus coûteux (chaque
 // rig proche = ~12 draw calls) ; 75 m : un bon compromis (100 m garde presque tous les piétons en rig complet à la vue par défaut).
-const PED_FULL_RIG_DIST = 75, PED_FULL_RIG_HYST = 10;
+const PED_FULL_RIG_DIST = 150, PED_FULL_RIG_HYST = 10;
 const PED_FULL_RIG_DIST_SQ = PED_FULL_RIG_DIST*PED_FULL_RIG_DIST;
 const PED_FULL_RIG_FAR_SQ = (PED_FULL_RIG_DIST+PED_FULL_RIG_HYST)*(PED_FULL_RIG_DIST+PED_FULL_RIG_HYST);
 const PED_LOD_CAPACITY = 1500;
