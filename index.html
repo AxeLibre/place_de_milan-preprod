@@ -6171,17 +6171,24 @@ function collectSiteLights(){
     // pas en exporter, mais on ne compte pas sur ce défaut.
     o.castShadow = false;
     if(o.isPointLight || o.isSpotLight){
-      // PERFORMANCE : les lumières ponctuelles ne sont PLUS allumées telles
-      // quelles (43 lumières évaluées par pixel = ~18 ms de GPU par image la
-      // nuit, et une recompilation de tous les shaders à chaque ajout). Elles
-      // deviennent des "sources" du pool de lumières de nuit (src/night-
-      // lights.js) : un nombre fixe de vraies lumières suit les lampadaires
-      // les plus proches de la vue. L'objet d'origine reste éteint en
-      // permanence et n'est pas inscrit dans siteLights.
       const wp = o.getWorldPosition(new THREE.Vector3());
       worldRoot.worldToLocal(wp);
-      NightLights.registerSource('site:' + siteLightSeq++, wp, { color:o.color.getHex(), intensity:o.intensity, distance:o.distance, decay:o.decay, groundY:groundYUnder(wp) });
-      o.visible = false;
+      if(wp.y >= STREET_LAMP_Y_MIN && wp.y <= STREET_LAMP_Y_MAX){
+        // PERFORMANCE : les lampadaires de rue (lumière à 4,10–4,20 m, les plus
+        // nombreux) ne sont PLUS allumés tels quels (une lumière évaluée par
+        // pixel chacun = ~18 ms de GPU par image la nuit, et une recompilation
+        // de tous les shaders à chaque ajout). Ils deviennent des "sources" du
+        // pool de lumières de nuit + flaque de lumière au sol (src/night-
+        // lights.js). L'objet d'origine reste éteint en permanence et n'est pas
+        // inscrit dans siteLights.
+        NightLights.registerSource('site:' + siteLightSeq++, wp, { color:o.color.getHex(), intensity:o.intensity, distance:o.distance, decay:o.decay, groundY:groundYUnder(wp) });
+        o.visible = false;
+      } else {
+        // Tous les autres (lumières en hauteur, projecteurs...) : la flaque au
+        // sol n'aurait aucun sens à cette hauteur — ils restent de vraies
+        // lumières, allumées normalement la nuit (voir siteLights).
+        siteLights.push(o);
+      }
     } else {
       siteLights.push(o);
     }
@@ -6189,6 +6196,9 @@ function collectSiteLights(){
   siteLights.forEach(l=> l.visible = isNight);
   NightLights.setNightActive(isNight);
 }
+// Lampadaires de rue : altitude de la lumière (repère de la maquette) comprise
+// entre ces bornes — 4,12 m et 4,183 m dans place_de_milan.glb.
+const STREET_LAMP_Y_MIN = 4.10, STREET_LAMP_Y_MAX = 4.20;
 let siteLightSeq = 0;
 // Altitude de la surface horizontale située sous une lampe (sol, quai, toit) :
 // sert à poser sa flaque de lumière. Un rayon vers le bas, en ignorant les
@@ -7394,7 +7404,7 @@ const PIETON_ANIM_CULL_DIST_SQ = 55*55; // (ancien seuil, conservé pour référ
 // PED_FULL_RIG_DIST + PED_FULL_RIG_HYST il passe en silhouette (hystérésis : pas
 // de va-et-vient au seuil). Plus grand = plus joli de loin, plus coûteux (chaque
 // rig proche = ~12 draw calls) ; 75 m : un bon compromis (100 m garde presque tous les piétons en rig complet à la vue par défaut).
-const PED_FULL_RIG_DIST = 150, PED_FULL_RIG_HYST = 10;
+const PED_FULL_RIG_DIST = 75, PED_FULL_RIG_HYST = 10;
 const PED_FULL_RIG_DIST_SQ = PED_FULL_RIG_DIST*PED_FULL_RIG_DIST;
 const PED_FULL_RIG_FAR_SQ = (PED_FULL_RIG_DIST+PED_FULL_RIG_HYST)*(PED_FULL_RIG_DIST+PED_FULL_RIG_HYST);
 const PED_LOD_CAPACITY = 1500;
