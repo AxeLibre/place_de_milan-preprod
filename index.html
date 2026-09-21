@@ -100,6 +100,11 @@
     <button id="architect-btn-export" title="Exporter la planche en PNG"><iconify-icon icon="fluent-emoji-flat:camera" width="18" height="18"></iconify-icon><span>Exporter</span></button>
   </div>
   <canvas id="architect-canvas"></canvas>
+  <div id="architect-zoom-tools">
+    <button id="architect-zoom-in" type="button" title="Agrandir la vue dans l'image"><i data-lucide="zoom-in"></i></button>
+    <button id="architect-zoom-out" type="button" title="Réduire la vue dans l'image"><i data-lucide="zoom-out"></i></button>
+    <button id="architect-pan" type="button" title="Main : déplacer l'intérieur de l'image (cliquer puis glisser)"><i data-lucide="hand"></i></button>
+  </div>
   <div id="skyline-mode-bar">
     <button class="active" id="btn-skyline-3d" data-skyline="" title="Vue 3D libre de la maquette globale (mode actuel)"><iconify-icon icon="fluent-emoji-flat:package" width="18" height="18"></iconify-icon><span>Maquette 3D</span></button>
     <button id="btn-skyline-nord" data-skyline="nord" title="Élévation technique — vue orthogonale depuis le Nord"><i data-lucide="panel-top"></i><span>Skyline Nord</span></button>
@@ -174,6 +179,10 @@
         <button class="eye-btn" id="eye-btn-grass" title="Afficher/masquer le gazon"><i data-lucide="eye" class="icon-on"></i><i data-lucide="eye-off" class="icon-off"></i></button>
         <button class="tool-btn ghost" id="btn-paint-grass"><iconify-icon icon="fluent-emoji-flat:paintbrush" width="21" height="21"></iconify-icon><span class="tool-btn-label">Gazon</span></button>
       </div>
+      <div class="tool-row">
+        <button class="eye-btn" id="eye-btn-amenagements" title="Afficher/masquer les aménagements"><i data-lucide="eye" class="icon-on"></i><i data-lucide="eye-off" class="icon-off"></i></button>
+        <button class="tool-btn ghost" id="btn-amenagements" title="Aménagements : fontaine, lampadaires… à poser dans le polygone d'implantation"><iconify-icon icon="fluent-emoji-flat:fountain" width="21" height="21"></iconify-icon><span class="tool-btn-label">Aménagements</span></button>
+      </div>
       <div class="tool-sep"></div>
       <div class="tool-row">
         <button class="eye-btn" id="eye-btn-labels" title="Afficher/masquer les labels"><i data-lucide="eye" class="icon-on"></i><i data-lucide="eye-off" class="icon-off"></i></button>
@@ -216,6 +225,10 @@
       <button class="brush-btn" id="brush-small" title="Petit pinceau"><i data-lucide="circle" style="width:6px;height:6px;fill:currentColor;"></i></button>
       <button class="brush-btn active" id="brush-medium" title="Pinceau moyen"><i data-lucide="circle" style="width:11px;height:11px;"></i></button>
       <button class="brush-btn" id="brush-large" title="Grand pinceau"><i data-lucide="circle" style="width:16px;height:16px;"></i></button>
+    </div>
+    <div id="amenagements-popout">
+      <div id="amenagements-menu-list"></div>
+      <button class="small-action" id="btn-clear-amenagements" style="display:none;width:100%;align-items:center;gap:5px;justify-content:center;margin-top:2px;"><i data-lucide="trash-2" style="width:12px;height:12px;"></i> Supprimer tous les aménagements</button>
     </div>
     <div id="label-mode-popout">
       <button class="brush-btn active" id="label-mode-ground" title="Poser au sol"><iconify-icon icon="fluent-emoji-flat:round-pushpin" width="19" height="19"></iconify-icon></button>
@@ -413,11 +426,12 @@ import { floorHeightFor, usageAtFloor, footprintForBand, buildingTotalHeight, bu
 // remplacé le fichier sur le serveur. PENSE À INCRÉMENTER CE NUMÉRO À CHAQUE
 // FOIS QUE TU MODIFIES facade-motifs.js, sinon le problème reviendra.
 import { MOTIFS, MOTIF_PITCH_M, DEFAULT_FACADE_TINT, DEFAULT_MOTIF, MOTIF_KIND_INDEX } from './src/facade-motifs.js?v=2';
-import { treePlacing, treesGroup, grassPainting, labelGroup, labelsVisible, labels, drawing, drawMenuOpen, labelPlacing } from './src/state.js';
+import { treePlacing, amenagementPlacing, treesGroup, grassPainting, labelGroup, labelsVisible, labels, drawing, drawMenuOpen, labelPlacing } from './src/state.js';
 import * as ExtGare from './src/extension-gare.js';
 import * as CameraSkyline from './src/camera-skyline.js';
 import * as CameraArchitect from './src/camera-architect.js';
 import * as Trees from './src/trees.js';
+import * as Amenagements from './src/amenagements.js';
 import * as Grass from './src/grass.js';
 import * as Labels from './src/labels.js';
 import * as DrawTool from './src/draw-tool.js';
@@ -464,6 +478,30 @@ const GLASS_WINDOW_LIT_PROB = 0.38; // proportion de baies allumées la nuit (us
 // bureaux/commerces/services) — les autres (résidentiel/hôtel/non défini)
 // gardent un allumage aléatoire, plus réaliste le soir.
 const GLASS_ALWAYS_LIT_USAGES = new Set(['bureaux','commerces','services']);
+// Mémorise, sur un matériau à fenêtres allumées la nuit, son hook de shader
+// d'origine (et sa clé de cache propre s'il en a une) : permet à
+// secureNightWindowShader() de le rétablir si un autre patch l'avait écrasé.
+function rememberNightWindowShader(m){
+  m.userData.nightWindowHook = m.onBeforeCompile;
+  m.userData.nightWindowOwnKey = Object.prototype.hasOwnProperty.call(m, 'customProgramCacheKey') ? m.customProgramCacheKey : null;
+}
+// Vérifie que le shader de fenêtres d'un matériau est toujours branché (soit
+// directement, soit sous un patch de brouillard chaîné) ; sinon le rebranche.
+// Sécurité contre toute future régression du type "un autre patch écrase
+// onBeforeCompile" : sans elle, les fenêtres du bâti existant restent
+// éteintes la nuit jusqu'au rechargement de la page.
+function secureNightWindowShader(m){
+  const hook = m && m.userData && m.userData.nightWindowHook;
+  if(!hook) return false;
+  let h = m.onBeforeCompile;
+  while(h){ if(h === hook) return false; h = h.wrapsHook; }
+  m.onBeforeCompile = hook;
+  if(m.userData.nightWindowOwnKey) m.customProgramCacheKey = m.userData.nightWindowOwnKey;
+  else delete m.customProgramCacheKey;
+  heightFogPatchedMats.delete(m); // laisse applyHeightFog() le rechaîner proprement
+  m.needsUpdate = true;
+  return true;
+}
 let glassEmissiveMaterials = []; // clones "glass" actuellement dans la scène (pour bascule jour/nuit)
 
 // ============================================================
@@ -941,6 +979,7 @@ metalnessFactor = mix(mix(0.0, 0.3, nwInWindow), 0.05, nwInSign);`)
 }`);
   };
   m.userData.nightWindowUniforms = uniforms;
+  rememberNightWindowShader(m);
   m.extensions = m.extensions || {};
   m.extensions.derivatives = true; // requis par fwidth() dans le shader ci-dessus (WebGL1 ; sans effet en WebGL2)
   m.needsUpdate = true;
@@ -1034,6 +1073,7 @@ float hash12NW(vec2 p){
 }`);
   };
   m.userData.nightWindowUniforms = uniforms;
+  rememberNightWindowShader(m);
   m.extensions = m.extensions || {};
   m.extensions.derivatives = true; // requis par fwidth() dans le shader ci-dessus (WebGL1 ; sans effet en WebGL2)
   m.needsUpdate = true;
@@ -1632,6 +1672,7 @@ function enterPedestrianMode(){
   if(drawing) DrawTool.cancelDraw();
   if(drawMenuOpen) DrawTool.closeDrawMenu();
   if(treePlacing) Trees.stopTreeTool();
+  if(amenagementPlacing) Amenagements.stopAmenagementsTool();
   if(grassPainting) Grass.stopGrassTool();
   if(labelPlacing) Labels.stopLabelTool();
   if(editingBuildingId) stopEditBuildingShape();
@@ -1783,17 +1824,35 @@ function applyHeightFog(root){
     mats.forEach(m=>{
       if(!m || !m.fog || heightFogPatchedMats.has(m)) return;
       heightFogPatchedMats.add(m);
-      m.onBeforeCompile = injectHeightFog;
+      // ATTENTION (bug corrigé) : on n'ÉCRASE plus `onBeforeCompile` — on le
+      // CHAÎNE. Plusieurs matériaux portent déjà leur propre shader via
+      // `onBeforeCompile` (fenêtres allumées la nuit du bâti existant —
+      // makeStaticNightWindowMaterial — et des nouveaux bâtiments —
+      // glassMaterialFor). L'ancienne affectation directe les remplaçait par
+      // le seul patch de brouillard à la première entrée en Vue Globale /
+      // Skyline : plus aucune fenêtre allumée la nuit, définitivement, même
+      // après retour à la vue normale.
+      const prevHook = m.onBeforeCompile;
+      // Clé de cache d'origine, calculée AVANT de remplacer le hook (la clé par
+      // défaut de Three.js est justement la source de `onBeforeCompile`).
+      const prevKey = String(m.customProgramCacheKey());
+      const chained = function(shader, rendererArg){
+        if(prevHook) prevHook.call(this, shader, rendererArg);
+        injectHeightFog(shader);
+      };
+      chained.wrapsHook = prevHook; // permet à secureNightWindowShader() de retrouver le hook d'origine
+      m.onBeforeCompile = chained;
       // IMPORTANT : sans customProgramCacheKey, Three.js identifie les
       // programmes shader compilés par une "signature" de paramètres qui
       // n'inclut PAS le contenu réel de onBeforeCompile. Résultat : si un
       // matériau aux réglages similaires (fog, roughness, etc.) avait déjà
       // été compilé AVANT ce patch, le moteur réutilisait silencieusement
       // l'ancien programme (non patché) au lieu de compiler le nôtre — le
-      // patch n'avait donc, dans les faits, jamais d'effet visible. Cette
-      // clé unique force un programme séparé, réellement compilé avec notre
-      // code de brouillard.
-      m.customProgramCacheKey = () => 'heightFog';
+      // patch n'avait donc, dans les faits, jamais d'effet visible. La clé
+      // reprend celle d'origine (elle distingue les shaders de fenêtres des
+      // matériaux ordinaires) préfixée pour la séparer des programmes non
+      // patchés.
+      m.customProgramCacheKey = () => 'heightFog|' + prevKey;
       m.needsUpdate = true;
     });
   });
@@ -1864,6 +1923,7 @@ function activateGlobalView(){
   if(drawing) DrawTool.cancelDraw();
   if(drawMenuOpen) DrawTool.closeDrawMenu();
   if(treePlacing) Trees.stopTreeTool();
+  if(amenagementPlacing) Amenagements.stopAmenagementsTool();
   if(grassPainting) Grass.stopGrassTool();
   if(labelPlacing) Labels.stopLabelTool();
   if(editingBuildingId) stopEditBuildingShape();
@@ -2153,8 +2213,10 @@ CameraSkyline.initCameraSkyline({
 // dans un autre module.)
 const _exitGlobalViewBase = exitGlobalView;
 exitGlobalView = function(){
+  const wasActive = globalViewActive;
   CameraSkyline.resetSkylineSubMode();
   _exitGlobalViewBase();
+  if(wasActive) refreshNightLighting(); // la Vue Globale a forcé un éclairage de jour et re-patché les matériaux
 };
 
 /* ------------------------------------------------------------
@@ -2180,6 +2242,8 @@ CameraArchitect.initCameraArchitect({
   setVehiclesVisible: (v) => { vehiclesVisible = v; },
   getPedestriansVisible: () => pedestriansVisible,
   setPedestriansVisible: (v) => { pedestriansVisible = v; },
+  stopAmenagementsTool: Amenagements.stopAmenagementsTool,
+  refreshNightLighting,
 });
 // La barre de sortie glisse depuis le haut dès que la souris touche le rebord
 // supérieur de la page (hystérésis pour éviter un clignotement au pixel près).
@@ -3198,6 +3262,20 @@ Trees.initTrees({
 });
 
 /* ============================================================
+   AMÉNAGEMENTS — module externalisé (src/amenagements.js) : fontaine,
+   lampadaires… (assets.glb) posés dans le polygone d'implantation.
+   ============================================================ */
+Amenagements.initAmenagements({
+  cancelDraw: DrawTool.cancelDraw, closeDrawMenu: DrawTool.closeDrawMenu, stopTreeTool: Trees.stopTreeTool,
+  stopGrassTool: Grass.stopGrassTool, stopLabelTool: Labels.stopLabelTool, stopEditBuildingShape,
+  stopMoveBuilding, getMovingBuildingId: () => movingBuildingId,
+  flashStatus: DrawTool.flashStatus, makeCircleDecal,
+  showZoneOverflowOutline, hideZoneOverflowOutline,
+  getGrassParts: () => Grass.grassParts,
+  getIsNight: () => isNight,
+});
+
+/* ============================================================
    GAZON — module externalisé (src/grass.js).
    ============================================================ */
 Grass.initGrass({
@@ -4156,7 +4234,7 @@ function toolIsActive(){
   // Le mode piéton est traité comme un "outil exclusif" ici : il désactive le
   // survol/sélection de bâtiment sur la maquette (donc le halo bleu néon),
   // au même titre que le tracé, la plantation d'arbres, etc.
-  return drawing || treePlacing || grassPainting || !!editingBuildingId || !!movingBuildingId || !!cloningBuildingId || freeFlyActive();
+  return drawing || treePlacing || amenagementPlacing || grassPainting || !!editingBuildingId || !!movingBuildingId || !!cloningBuildingId || freeFlyActive();
 }
 function buildingHitAt(ev){
   const rect = renderer.domElement.getBoundingClientRect();
@@ -4382,6 +4460,7 @@ function startEditBuildingShape(b, bandIndex=null){
   if(drawing) DrawTool.cancelDraw();
   if(drawMenuOpen) DrawTool.closeDrawMenu();
   if(treePlacing) Trees.stopTreeTool();
+  if(amenagementPlacing) Amenagements.stopAmenagementsTool();
   if(grassPainting) Grass.stopGrassTool();
   if(labelPlacing) Labels.stopLabelTool();
   ExtGare.cancelExtensionGareIfActive();
@@ -4449,6 +4528,7 @@ function startMoveBuilding(b){
   if(drawing) DrawTool.cancelDraw();
   if(drawMenuOpen) DrawTool.closeDrawMenu();
   if(treePlacing) Trees.stopTreeTool();
+  if(amenagementPlacing) Amenagements.stopAmenagementsTool();
   if(grassPainting) Grass.stopGrassTool();
   if(labelPlacing) Labels.stopLabelTool();
   ExtGare.cancelExtensionGareIfActive();
@@ -4508,6 +4588,7 @@ function startCloneBuilding(source){
   if(drawing) DrawTool.cancelDraw();
   if(drawMenuOpen) DrawTool.closeDrawMenu();
   if(treePlacing) Trees.stopTreeTool();
+  if(amenagementPlacing) Amenagements.stopAmenagementsTool();
   if(grassPainting) Grass.stopGrassTool();
   if(labelPlacing) Labels.stopLabelTool();
   ExtGare.cancelExtensionGareIfActive();
@@ -6185,6 +6266,7 @@ function ensureDayVisualEnvironment(){
   scene.environment = dayEnvTexture;
   renderer.toneMappingExposure = 0.85;
   siteLights.forEach(l=> l.visible = false);
+  Amenagements.setNightState(false);
 }
 function ensureNightVisualEnvironment(){
   sun.visible = false;
@@ -6194,6 +6276,7 @@ function ensureNightVisualEnvironment(){
   renderer.toneMappingExposure = 1.0;
   paintSkyGradient(NIGHT_GRADIENT[0], NIGHT_GRADIENT[1]);
   siteLights.forEach(l=> l.visible = true);
+  Amenagements.setNightState(true);
 }
 // Applique le mode Jour à une heure solaire précise (continue) — passer
 // heavy:true lors d'une entrée depuis la Nuit (reconstruit l'environnement),
@@ -6210,6 +6293,24 @@ function applyDayAtHour(hourDecimal, opts){
   paintSkyGradient('#'+top.getHexString(), '#'+bottom.getHexString());
   if(opts.heavy){ applyVehicleLightState(); applyTrainWindowEmissive(); applyGlassWindowEmissive(); applyStaticWindowEmissive(); }
   refreshSunPanelUI();
+}
+// SÉCURITÉ ÉCLAIRAGE — resynchronise TOUT ce qui dépend de l'état jour/nuit
+// courant, sans rien supposer de ce que les modes plein écran (Architecte,
+// Vue Globale/Skyline) ont pu laisser derrière eux : lampes de la maquette et
+// des aménagements, fenêtres allumées du bâti existant et des nouveaux
+// bâtiments, feux des véhicules et trains. Vérifie aussi que le shader de
+// fenêtres de chaque matériau est bien toujours branché (voir
+// secureNightWindowShader). Appelée à la sortie du mode Architecte et de la
+// Vue Globale ; sans effet visible si tout était déjà en ordre.
+function refreshNightLighting(){
+  siteLights.forEach(l=> l.visible = isNight);
+  Amenagements.setNightState(isNight);
+  staticWindowMaterials.forEach(({material})=> secureNightWindowShader(material));
+  glassEmissiveMaterials.forEach(m=> secureNightWindowShader(m));
+  applyVehicleLightState();
+  applyTrainWindowEmissive();
+  applyGlassWindowEmissive();
+  applyStaticWindowEmissive();
 }
 function applyNight(){
   lightingMode = 'nuit'; isNight = true;
@@ -6561,6 +6662,7 @@ document.getElementById('btn-save-json').addEventListener('click', ()=>{
     version: 2,
     buildings: buildings.map(b=>({ name:b.name, points:b.points, floors:b.floors, bands:b.bands })),
     trees: Trees.serializeTrees(),
+    amenagements: Amenagements.serializeAmenagements(),
     grass: Grass.serializeGrass(),
     labels: labels.filter(l=>!l.locked).map(l=>({ x:l.x, z:l.z, y:l.y, text:l.text, onBuilding:l.onBuilding||false })),
     extensionGare: ExtGare.serializeExtensionGare(),
@@ -6587,6 +6689,7 @@ if(btnSaveDepart){
     const departData = {
       buildings: buildings.map(b=>({ name:b.name, points:b.points, floors:b.floors, bands:b.bands })),
       trees: Trees.serializeTrees(),
+      amenagements: Amenagements.serializeAmenagements(),
       labels: labels.map(l=>({ x:l.x, z:l.z, y:l.y, text:l.text, onBuilding:l.onBuilding||false }))
     };
     const blob = new Blob([JSON.stringify(departData,null,2)], {type:'application/json'});
@@ -6638,6 +6741,9 @@ fileLoad.addEventListener('change', (e)=>{
 
       // Arbres
       Trees.loadTrees(data.trees);
+
+      // Aménagements (fontaine, lampadaires…) — assets.glb, chargé au besoin
+      Amenagements.loadAmenagements(data.amenagements);
 
       // Labels (les labels ADMIN verrouillés, issus de depart.json, ne sont
       // pas inclus dans les sauvegardes de projet — on ne touche donc qu'aux
@@ -7523,6 +7629,7 @@ function tryAutoLoadDepart(){
       createBuilding(pts, { name:b.name, floors:b.floors, bands:b.bands, noRoofInset:true, silent:true });
     });
     (data.trees||[]).forEach(t=> Trees.addTree({x:t.x, y:0, z:t.z}));
+    if(data.amenagements && data.amenagements.length) Amenagements.loadAmenagements(data.amenagements);
     (data.labels||[]).forEach(l=> Labels.addLabel(l.x, l.z, l.text, { locked:true, y:l.y, onBuilding:l.onBuilding }));
     if(data.buildings && data.buildings.length){ rebuildAll(); renderList(); }
     console.info(`[Place de Milan] État de départ chargé (${DEPART_JSON_URL}) : ${(data.buildings||[]).length} bâtiment(s)${repairedCount?` (${repairedCount} recalé(s) sur le polygone)`:''}, ${(data.trees||[]).length} arbre(s), ${(data.labels||[]).length} label(s) admin.`);
@@ -7541,7 +7648,8 @@ const clock = new THREE.Clock();
    ============================================================ */
 ExtGare.initExtensionGare({
   flashStatus: DrawTool.flashStatus, groundPointFromEvent, cancelDraw: DrawTool.cancelDraw, closeDrawMenu: DrawTool.closeDrawMenu,
-  stopTreeTool: Trees.stopTreeTool, stopGrassTool: Grass.stopGrassTool, stopLabelTool: Labels.stopLabelTool, stopEditBuildingShape
+  stopTreeTool: Trees.stopTreeTool, stopGrassTool: Grass.stopGrassTool, stopLabelTool: Labels.stopLabelTool, stopEditBuildingShape,
+  stopAmenagementsTool: Amenagements.stopAmenagementsTool
 });
 
 /* ============================================================
@@ -7572,6 +7680,9 @@ setupEyeToggle('eye-btn-extgare',
 setupEyeToggle('eye-btn-trees',
   ()=> Trees.getTreesVisible(),
   (v)=> Trees.setTreesVisible(v));
+setupEyeToggle('eye-btn-amenagements',
+  ()=> Amenagements.getAmenagementsVisible(),
+  (v)=> Amenagements.setAmenagementsVisible(v));
 setupEyeToggle('eye-btn-grass',
   ()=> Grass.getGrassVisible(),
   (v)=> Grass.setGrassVisible(v));
