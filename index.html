@@ -7403,8 +7403,8 @@ const PIETON_ANIM_CULL_DIST_SQ = 55*55; // (ancien seuil, conservé pour référ
 // Distance (m) sous laquelle un piéton garde son rig animé complet ; au-delà de
 // PED_FULL_RIG_DIST + PED_FULL_RIG_HYST il passe en silhouette (hystérésis : pas
 // de va-et-vient au seuil). Plus grand = plus joli de loin, plus coûteux (chaque
-// rig proche = ~12 draw calls) ; 75 m : un bon compromis (100 m garde presque tous les piétons en rig complet à la vue par défaut).
-const PED_FULL_RIG_DIST = 75, PED_FULL_RIG_HYST = 10;
+// rig proche = ~12 draw calls) ; 150 m (demandé) : la plupart des piétons de la vue par défaut restent animés.
+const PED_FULL_RIG_DIST = 150, PED_FULL_RIG_HYST = 15;
 const PED_FULL_RIG_DIST_SQ = PED_FULL_RIG_DIST*PED_FULL_RIG_DIST;
 const PED_FULL_RIG_FAR_SQ = (PED_FULL_RIG_DIST+PED_FULL_RIG_HYST)*(PED_FULL_RIG_DIST+PED_FULL_RIG_HYST);
 const PED_LOD_CAPACITY = 1500;
@@ -7418,7 +7418,9 @@ function ensurePedestrianLod(){
   // boîte englobante en pose de repos. Rôle de couleur : 0 = pantalon,
   // 1 = t-shirt, 2/3 = peau (tête, bras).
   const t = peopleTemplate.clone(true); t.position.set(0,0,0); t.quaternion.identity(); t.updateMatrixWorld(true);
-  const PARTS = [['leg_l',0],['leg_r',0],['body',1],['arm_l',3],['arm_r',3],['head',2]];
+  // Pas de bras : à plus de 150 m ils feraient quelques pixels (et leur boîte de repos
+  // englobe le balancement, donc trop profonde) — jambes, corps et tête suffisent.
+  const PARTS = [['leg_l',0],['leg_r',0],['body',1],['head',2]];
   const specs = [];
   PARTS.forEach(([name, role])=>{
     const node = t.getObjectByName(name);
@@ -7428,6 +7430,22 @@ function ensurePedestrianLod(){
     const size = bb.getSize(new THREE.Vector3()), c = bb.getCenter(new THREE.Vector3());
     specs.push({ role, size, c });
   });
+  // Les jambes : leur boîte englobante en pose de repos englobe la FOULÉE (une
+  // jambe devant, l'autre derrière), donc beaucoup trop profonde dans le sens
+  // de la marche. L'axe avant-arrière est celui où le corps est le moins épais
+  // (les épaules sont plus larges que le buste n'est profond) ; on y borne
+  // l'épaisseur des jambes à leur largeur latérale et on les recentre sur le
+  // corps.
+  const bodySpec = specs.find(sp=> sp.role === 1);
+  if(bodySpec){
+    const fwd = bodySpec.size.x < bodySpec.size.z ? 'x' : 'z';
+    const lat = fwd === 'x' ? 'z' : 'x';
+    specs.forEach(sp=>{
+      if(sp.role !== 0) return;
+      sp.size[fwd] = Math.min(sp.size[fwd], Math.max(sp.size[lat] * 1.1, 0.08));
+      sp.c[fwd] = bodySpec.c[fwd];
+    });
+  }
   if(!specs.length){
     // Gabarit sans les segments attendus : boîte unique de repli d'après la boîte globale.
     const bb = new THREE.Box3().setFromObject(t);
