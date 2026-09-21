@@ -500,8 +500,13 @@ let glassEmissiveMaterials = []; // clones "glass" actuellement dans la scène (
 // NEWBLDG_WINDOW_PARAMS et que la logique commerces ci-dessous.
 function motifParamsFor(motifId, floorHeightM){
   const def = MOTIFS[motifId] || MOTIFS[DEFAULT_MOTIF];
-  const hResolved = def.h!=null ? def.h : Math.max(0.2, floorHeightM - def.sill - (def.topMargin||0));
   const archRadiusM = def.w/2; // rayon réel de l'arc (m) — seulement utilisé si kind==='arch'
+  // Le dôme d'une arche s'ajoute AU-DESSUS du corps rectangulaire (h) — pour
+  // qu'une arche à hauteur automatique (h=null) affleure le plafond avec le
+  // SOMMET du dôme (et pas juste le haut du corps), on réserve d'abord
+  // l'espace du rayon avant de calculer h.
+  const domeAllowanceM = (def.kind === 'arch') ? archRadiusM : 0;
+  const hResolved = def.h!=null ? def.h : Math.max(0.2, floorHeightM - def.sill - (def.topMargin||0) - domeAllowanceM);
   return {
     kind: MOTIF_KIND_INDEX[def.kind] != null ? MOTIF_KIND_INDEX[def.kind] : 0,
     wFrac: def.w / MOTIF_PITCH_M,
@@ -530,15 +535,26 @@ function motifSvgPreview(motifId, facadeHex){
   const refH = 3.2, VW = 60, VH = 60 * (refH / MOTIF_PITCH_M);
   const mx = m => (m / MOTIF_PITCH_M) * VW;
   const my = m => VH - (m / refH) * VH;
+  // Même logique que motifParamsFor() dans index.html : réserver le rayon du
+  // dôme pour une arche à hauteur automatique, sinon son sommet dépasserait
+  // la hauteur de référence au lieu de l'atteindre pile.
+  const domeAllowanceM = (def.kind === 'arch') ? def.w/2 : 0;
+  const hMeters = def.h!=null ? def.h : Math.max(0.2, refH - def.sill - (def.topMargin||0) - domeAllowanceM);
   const w = def.w!=null ? mx(def.w) : null;
-  const h = def.h!=null ? (my(def.sill) - my(def.sill+def.h)) : (my(def.sill) - my(refH - (def.topMargin||0)));
+  const h = my(def.sill) - my(def.sill + hMeters);
   const cx = VW/2, yTop = my(def.sill) - h, yBot = my(def.sill);
   let shape = '';
   if(def.kind === 'rect'){
     shape = `<rect x="${(cx-w/2).toFixed(1)}" y="${yTop.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}"/>`;
   } else if(def.kind === 'parallelogram'){
     const s = mx(def.skew);
-    shape = `<polygon points="${(cx-w/2).toFixed(1)},${yBot.toFixed(1)} ${(cx+w/2).toFixed(1)},${yBot.toFixed(1)} ${(cx+w/2+s).toFixed(1)},${yTop.toFixed(1)} ${(cx-w/2+s).toFixed(1)},${yTop.toFixed(1)}"/>`;
+    // Trois copies décalées de 0/±VW (une largeur de carreau) : pour un skew
+    // qui vaut un multiple entier de MOTIF_PITCH_M (motifs "sans couture"),
+    // une des trois couvre toujours correctement la zone visible de
+    // l'aperçu, quel que soit le sens/l'amplitude de l'inclinaison — le
+    // bouton (overflow:hidden) rogne le reste.
+    const poly = dx => `${(cx-w/2+dx).toFixed(1)},${yBot.toFixed(1)} ${(cx+w/2+dx).toFixed(1)},${yBot.toFixed(1)} ${(cx+w/2+s+dx).toFixed(1)},${yTop.toFixed(1)} ${(cx-w/2+s+dx).toFixed(1)},${yTop.toFixed(1)}`;
+    shape = `<polygon points="${poly(0)}"/><polygon points="${poly(-VW)}"/><polygon points="${poly(VW)}"/>`;
   } else if(def.kind === 'arch'){
     const r = w/2, springY = yBot - h;
     shape = `<path d="M ${(cx-r).toFixed(1)} ${yBot.toFixed(1)} L ${(cx-r).toFixed(1)} ${springY.toFixed(1)} A ${r.toFixed(1)} ${r.toFixed(1)} 0 0 1 ${(cx+r).toFixed(1)} ${springY.toFixed(1)} L ${(cx+r).toFixed(1)} ${yBot.toFixed(1)} Z"/>`;
@@ -560,8 +576,12 @@ function motifSvgPreview(motifId, facadeHex){
   } else if(def.kind === 'transom'){
     const transomH = def.transomHeight || 0;
     const rows = Math.max(1, def.transomRows || 1);
-    const bandPx = h * (transomH / def.h);
-    const barPx = Math.max(0.5, 0.012 * (h/def.h) * 3.2 /* échelle indicative */);
+    // bandPx/barPx utilisent hMeters (toujours un vrai nombre, résolu plus
+    // haut) et non def.h — def.h vaut `null` pour toutes les baies à hauteur
+    // automatique, ce qui donnait un ratio Infinity/NaN et un bandeau (donc
+    // des barreaux) mal placés dès qu'un motif "transom" passait en h=null.
+    const bandPx = h * (transomH / hMeters);
+    const barPx = Math.max(0.5, 0.012 * (h/hMeters) * 3.2 /* échelle indicative */);
     let bars = `<rect x="${(cx-w/2).toFixed(1)}" y="${yTop.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="#7fa8c9"/>`;
     // j va de 1 (première barre interne, juste sous le sommet de la fenêtre)
     // à rows (barre limite bandeau/grand carreau du bas) — jamais de barre
@@ -679,12 +699,19 @@ function buildGlassWindowGLSL(usage, motifParams){
   }
 `;
   } else if(K === 1){
-    // parallelogram : fenêtre inclinée
+    // parallelogram : fenêtre inclinée. dx est ramené dans [-0.5, 0.5)
+    // (enroulement périodique, période = 1 carreau) au lieu d'une simple
+    // distance directe — indispensable dès que |skew| atteint/dépasse un
+    // carreau entier (motifs "inclinés sans couture", cf. incline_droit/
+    // gauche), sinon la bande sort du carreau et disparaît au lieu de se
+    // raccorder sur le carreau/étage suivant.
     return `
   {
     float t = clamp((cellUV.y - ${S})/max(${H}, 0.0001), 0.0, 1.0);
     float cx = 0.5 + ${SK}*t;
-    float xDist = abs(cellUV.x - cx) - ${W}*0.5;
+    float dx = cellUV.x - cx;
+    dx -= floor(dx + 0.5);
+    float xDist = abs(dx) - ${W}*0.5;
     float yDist = -min(cellUV.y - ${S}, (${S}+${H}) - cellUV.y);
     float edge = max(xDist, yDist);
     float aa = max(fwidth(edge), 0.001);
