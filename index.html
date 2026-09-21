@@ -1002,6 +1002,32 @@ metalnessFactor = mix(mix(0.0, 0.3, nwInWindow), 0.05, nwInSign);`)
 // selon X, on avance le long de Z, et inversement) pour que la grille suive
 // n'importe quelle orientation de façade sans réglage par bâtiment.
 let staticWindowMaterials = []; // { material, uniforms } pour les 3 matériaux du bâti existant — bascule jour/nuit
+/* ------------------------------------------------------------
+   ÉMISSIF DÉGRADÉ DES FAÇADES (nuit) : de la hauteur du sol jusqu'à
+   FACADE_GLOW_HEIGHT mètres, les façades (faces verticales) reçoivent une
+   émissive chaude qui s'estompe avec la hauteur — l'ambiance des lampadaires
+   et des vitrines de rez-de-chaussée, sans aucune lumière réelle. Un jeu
+   d'uniformes PARTAGÉ par tous les matériaux concernés (BATIMENTS,
+   BATIMENTS_fenetre, glass) : un seul réglage jour/nuit (voir
+   applyStaticWindowEmissive). Doit se trouver dans un shader qui déclare déjà
+   vWorldPosNW / vNormalNW.
+   ------------------------------------------------------------ */
+const FACADE_GLOW_STRENGTH = 0.5;  // intensité au pied de la façade (nuit)
+const FACADE_GLOW_HEIGHT = 20;     // hauteur (m) où l'effet s'éteint
+const facadeGlowUniforms = {
+  uFacadeGlow:      { value: 0 },  // 0 le jour, FACADE_GLOW_STRENGTH la nuit
+  uFacadeGlowH:     { value: FACADE_GLOW_HEIGHT },
+  uFacadeGlowBase:  { value: 0 },  // altitude du sol
+  uFacadeGlowColor: { value: new THREE.Color(1.0, 0.66, 0.36) },
+};
+let nightOnlyEmissiveMaterials = []; // { m, intensity } — voir setupNightOnlyEmissive()
+const FACADE_GLOW_DECL = `uniform float uFacadeGlow, uFacadeGlowH, uFacadeGlowBase;
+uniform vec3 uFacadeGlowColor;`;
+const FACADE_GLOW_BODY = `{
+  float fgH = clamp((vWorldPosNW.y - uFacadeGlowBase) / uFacadeGlowH, 0.0, 1.0);
+  float fgVert = 1.0 - abs(normalize(vNormalNW).y); // faces verticales seulement (pas les toits)
+  totalEmissiveRadiance += uFacadeGlowColor * uFacadeGlow * pow(1.0 - fgH, 1.6) * fgVert;
+}`;
 function makeStaticNightWindowMaterial(baseMaterial, opts){
   const m = baseMaterial.clone();
   const color = opts.color || [1.0, 0.86, 0.58];
@@ -1027,10 +1053,15 @@ function makeStaticNightWindowMaterial(baseMaterial, opts){
     uFloorCoolColor: { value: new THREE.Color(0.75, 0.85, 1.0) }, // variante "blanc froid" (néon/bureau), mélangée à uWinColor par étage
     // Étage technique : un plateau entier éteint de temps en temps (machinerie/CVC),
     // seulement utile quand litProb=1 (sinon l'aléatoire par baie fait déjà le travail).
-    uTechFloorProb: { value: opts.techFloorProb != null ? opts.techFloorProb : (opts.litProb >= 1 ? 0.05 : 0) }
+    uTechFloorProb: { value: opts.techFloorProb != null ? opts.techFloorProb : (opts.litProb >= 1 ? 0.05 : 0) },
+    // Alternance par BLOCS d'étages (ex. 6 => 6 étages allumés, 6 éteints, et
+    // ainsi de suite en partant du sol) ; 0 = désactivé.
+    uFloorBlock: { value: opts.floorBlock || 0 },
   };
+  const glow = !!opts.facadeGlow;
   m.onBeforeCompile = (shader)=>{
     Object.assign(shader.uniforms, uniforms);
+    if(glow) Object.assign(shader.uniforms, facadeGlowUniforms);
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPosNW;\nvarying vec3 vNormalNW;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWorldPosNW = (modelMatrix * vec4(position,1.0)).xyz;\nvNormalNW = normalize(mat3(modelMatrix) * normal);');
@@ -1038,8 +1069,9 @@ function makeStaticNightWindowMaterial(baseMaterial, opts){
       .replace('#include <common>', `#include <common>
 varying vec3 vWorldPosNW;
 varying vec3 vNormalNW;
-uniform float uNightWin, uPitch, uFloorH, uWinW, uWinH, uLitProb, uWarmthRange, uFloorBright, uFloorHue, uTechFloorProb;
+uniform float uNightWin, uPitch, uFloorH, uWinW, uWinH, uLitProb, uWarmthRange, uFloorBright, uFloorHue, uTechFloorProb, uFloorBlock;
 uniform vec3 uWinColor, uFloorCoolColor;
+${glow ? FACADE_GLOW_DECL : ''}
 float hash12NW(vec2 p){
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
   p3 += dot(p3, p3.yzx + 33.33);
@@ -1065,14 +1097,20 @@ float hash12NW(vec2 p){
   vec3 floorColor = mix(uWinColor, uFloorCoolColor, floorHueRnd*uFloorHue);
   float isTechFloor = step(hash12NW(vec2(floorId, 202.3)), uTechFloorProb); // 1 = étage technique, éteint
   lit *= (1.0 - isTechFloor);
+  if(uFloorBlock > 0.5) lit *= 1.0 - mod(floor(floorId / uFloorBlock), 2.0); // blocs alternés : uFloorBlock allumés, puis uFloorBlock éteints
   vec2 winFrac = vec2(uWinW, uWinH) / cellSize;
   vec2 d = abs(cellUV - 0.5) - winFrac*0.5;
   float edge = max(d.x, d.y);
   float aa = max(fwidth(edge), 0.001);
   float inWindow = 1.0 - smoothstep(-aa, aa, edge);
   totalEmissiveRadiance += floorColor * uNightWin * lit * warmth * floorBrightness * inWindow;
-}`);
+}
+${glow ? FACADE_GLOW_BODY : ''}`);
   };
+  // Le code GLSL dépend de `facadeGlow` alors que le texte de onBeforeCompile est
+  // identique : clé de cache explicite pour ne jamais partager un programme
+  // avec/sans dégradé de façade.
+  m.customProgramCacheKey = () => 'staticWindow|glow=' + (glow ? 1 : 0);
   m.userData.nightWindowUniforms = uniforms;
   rememberNightWindowShader(m);
   m.extensions = m.extensions || {};
@@ -1107,7 +1145,7 @@ function setupStaticWindowMaterials(root){
     rawList.forEach(raw => replacements.set(raw, shaded));
   }
   registerAll(rawGlassAll, {
-    pitch: 1, floorH: 3, winW: 0.72, winH: 1.5, litProb: 1.0, // grandes baies vitrées — TOUTES allumées, plancher bien visible entre étages
+    pitch: 1, floorH: 3, winW: 0.72, winH: 1.5, litProb: 1.0, facadeGlow: true, // grandes baies vitrées — TOUTES allumées, plancher bien visible entre étages
     color: [1.0, 0.86, 0.58]
   });
   registerAll(rawGlassFenetreAll, {
@@ -1115,7 +1153,7 @@ function setupStaticWindowMaterials(root){
     color: [1.0, 0.86, 0.58]
   });
   registerAll(rawBatimentsFenetreAll, {
-    pitch: 2, floorH: 2.5, winW: 0.65, winH: 0.85, litProb: GLASS_WINDOW_LIT_PROB, // portrait, répété tous les 2m
+    pitch: 2, floorH: 2.5, winW: 0.65, winH: 0.85, litProb: GLASS_WINDOW_LIT_PROB, facadeGlow: true, // portrait, répété tous les 2m
     color: [1.0, 0.82, 0.5] // plus chaud que glass/glass_fenetre — anciennement la teinte des nouveaux bâtiments
   });
   registerAll(rawGlassCarreAll, {
@@ -1138,25 +1176,32 @@ function setupStaticWindowMaterials(root){
 function applyStaticWindowEmissive(){
   const on = (typeof isNight!=='undefined' && isNight) || (window.isNight===true);
   staticWindowMaterials.forEach(({uniforms})=>{ uniforms.uNightWin.value = on ? GLASS_WINDOW_EMISSIVE_INTENSITY : 0; });
+  facadeGlowUniforms.uFacadeGlow.value = on ? FACADE_GLOW_STRENGTH : 0;
+  applyNightOnlyEmissive(on);
 }
 // Fenêtres allumées la nuit pour la maquette GLOBALE (global.glb) : mêmes
 // shaders que le bâti de place_de_milan (voir makeStaticNightWindowMaterial),
 // ajoutés à staticWindowMaterials SANS le réinitialiser (setupStaticWindowMaterials
 // repart de zéro pour place_de_milan). Les noms sont ceux de global.glb.
 function setupGlobalWindowMaterials(root){
-  const specs = {
-    'glass':            { pitch:1, floorH:3,   winW:0.72, winH:1.5,  litProb:1.0, color:[1.0,0.86,0.58] },
-    'glass.001':        { pitch:1, floorH:3,   winW:0.65, winH:1.3,  litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.86,0.58] },
-    'glass_fenetre':    { pitch:1, floorH:3,   winW:0.65, winH:1.3,  litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.86,0.58] },
-    'BATIMENTS_fenetre':{ pitch:2, floorH:2.5, winW:0.65, winH:0.85, litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.82,0.5] },
-    'glass_carre':      { pitch:3, floorH:3,   winW:2.5,  winH:2.5,  litProb:1.0, color:[1.0,1.0,1.0] },
+  const GLASS = { pitch:1, floorH:3, winW:0.72, winH:1.5, litProb:1.0, color:[1.0,0.86,0.58] };
+  const specs = { // clés en minuscules (comparaison insensible à la casse)
+    'glass':             { ...GLASS, facadeGlow:true },
+    'glass.001':         { pitch:1, floorH:3,   winW:0.65, winH:1.3,  litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.86,0.58] },
+    'glass_fenetre':     { pitch:1, floorH:3,   winW:0.65, winH:1.3,  litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.86,0.58] },
+    'batiments_fenetre': { pitch:2, floorH:2.5, winW:0.65, winH:0.85, litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.82,0.5], facadeGlow:true },
+    'glass_carre':       { pitch:3, floorH:3,   winW:2.5,  winH:2.5,  litProb:1.0, color:[1.0,1.0,1.0] },
+    // Tours "Crayon" et "To-Lyon" : mêmes fenêtres que "glass" ; "tolyon" alterne
+    // 6 étages allumés puis 6 éteints en partant du sol.
+    'crayon':            { ...GLASS },
+    'tolyon':            { ...GLASS, floorBlock:6 },
   };
   const bySpec = {}; // nom -> [matériaux d'origine]
   root.traverse(o=>{
     if(!o.isMesh) return;
     (Array.isArray(o.material) ? o.material : [o.material]).forEach(m=>{
       if(!m || !m.isMeshStandardMaterial || (m.userData && m.userData.nightWindowUniforms)) return;
-      const key = (m.name||'');
+      const key = (m.name||'').toLowerCase();
       if(specs[key]) (bySpec[key] = bySpec[key] || new Set()).add(m);
     });
   });
@@ -1173,6 +1218,53 @@ function setupGlobalWindowMaterials(root){
     else if(replacements.has(o.material)) o.material = replacements.get(o.material);
   });
   applyStaticWindowEmissive();
+}
+// Matériaux émissifs "de nuit seulement" (ex. "pyramide" de global.glb : émissive
+// dans le fichier, donc allumée en permanence) : le jour ils gardent leur matériau
+// classique (émissive coupée), la nuit ils retrouvent leur émissive d'origine.
+// (liste déclarée plus haut, près de facadeGlowUniforms : évite toute zone morte temporelle)
+function setupNightOnlyEmissive(root){
+  const seen = new Set(nightOnlyEmissiveMaterials.map(e=>e.m));
+  root.traverse(o=>{
+    if(!o.isMesh) return;
+    (Array.isArray(o.material) ? o.material : [o.material]).forEach(m=>{
+      if(!m || seen.has(m) || !/^pyramide$/i.test(m.name||'') || m.emissiveIntensity === undefined) return;
+      seen.add(m);
+      nightOnlyEmissiveMaterials.push({ m, intensity: m.emissiveIntensity });
+    });
+  });
+  applyStaticWindowEmissive();
+}
+function applyNightOnlyEmissive(on){
+  nightOnlyEmissiveMaterials.forEach(({m, intensity})=>{ m.emissiveIntensity = on ? intensity : 0; });
+}
+// Dégradé d'émissive de façade sur les matériaux "BATIMENTS" (murs pleins) : les
+// fenêtres ("BATIMENTS_fenetre", "glass") l'ont directement dans leur shader
+// (voir makeStaticNightWindowMaterial). On CHAÎNE le hook de shader existant.
+function setupFacadeGlowMaterials(root){
+  const done = new Set();
+  root.traverse(o=>{
+    if(!o.isMesh) return;
+    (Array.isArray(o.material) ? o.material : [o.material]).forEach(m=>{
+      if(!m || done.has(m) || m.name !== 'BATIMENTS' || !m.isMeshStandardMaterial || (m.userData && m.userData.facadeGlow)) return;
+      done.add(m);
+      m.userData.facadeGlow = true;
+      const prev = m.onBeforeCompile;
+      const prevKey = String(m.customProgramCacheKey());
+      m.onBeforeCompile = function(shader, rendererArg){
+        if(prev) prev.call(this, shader, rendererArg);
+        Object.assign(shader.uniforms, facadeGlowUniforms);
+        shader.vertexShader = shader.vertexShader
+          .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPosNW;\nvarying vec3 vNormalNW;')
+          .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWorldPosNW = (modelMatrix * vec4(position,1.0)).xyz;\nvNormalNW = normalize(mat3(modelMatrix) * normal);');
+        shader.fragmentShader = shader.fragmentShader
+          .replace('#include <common>', '#include <common>\nvarying vec3 vWorldPosNW;\nvarying vec3 vNormalNW;\n' + FACADE_GLOW_DECL)
+          .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' + FACADE_GLOW_BODY);
+      };
+      m.customProgramCacheKey = () => 'facadeGlow|' + prevKey;
+      m.needsUpdate = true;
+    });
+  });
 }
 // Lumières "global-light" de global.glb : LOD SEULEMENT (une flaque de lumière
 // au sol, jamais de vraie lumière ni de candidat au pool) — il peut y en avoir
@@ -1230,6 +1322,20 @@ const camera = new THREE.PerspectiveCamera(45, 1, 0.5, 3000);
 AppState.setCamera(camera);
 camera.position.set(140, 130, 170);
 
+// BROUILLARD : mêmes distances de début/fin (voir scene.fog), mais opacité
+// maximale réduite à FOG_STRENGTH au lieu de 100 % — les lointains restent
+// bien voilés à la même distance sans se fondre entièrement dans la couleur
+// du brouillard. Appliqué à TOUS les matériaux en modifiant le chunk de fog de
+// Three.js avant toute compilation de shader (constante GLSL, aucun uniforme).
+const FOG_STRENGTH = 0.55;
+{
+  const target = 'gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );';
+  if(THREE.ShaderChunk.fog_fragment.includes(target)){
+    THREE.ShaderChunk.fog_fragment = THREE.ShaderChunk.fog_fragment.replace(target, `gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor * ${FOG_STRENGTH.toFixed(3)} );`);
+  } else {
+    console.warn('[Place de Milan] Chunk fog_fragment inattendu : force du brouillard inchangée.');
+  }
+}
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 AppState.setRenderer(renderer);
 renderer.localClippingEnabled = true; // requis pour la disparition "haut vers bas" de la grue de chantier
@@ -1871,7 +1977,7 @@ uniform float heightFogMinFactor;`)
 		float heightMul = mix( heightFogGroundBoost, 1.0, clamp( hAboveGround * heightFogFalloff, 0.0, 1.0 ) );
 		fogFactor = clamp( fogFactor * heightMul, 0.0, 1.0 );
 	}
-	gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor );
+	gl_FragColor.rgb = mix( gl_FragColor.rgb, fogColor, fogFactor * ${FOG_STRENGTH.toFixed(3)} );
 #endif`);
 }
 // Applique le patch à tous les matériaux (avec fog) d'un sous-arbre — idempotent,
@@ -1946,6 +2052,8 @@ function loadGlobalGlbIfNeeded(cb, silent){
     forceDoubleSided(globalRoot);
     setupGlobalWindowMaterials(globalRoot); // fenêtres allumées la nuit
     simplifyGroundMaterials(globalRoot);    // sol/arbres en éclairage simple (+ ambiante de remplacement)
+    setupFacadeGlowMaterials(globalRoot);   // dégradé d'émissive de nuit sur les façades "BATIMENTS"
+    setupNightOnlyEmissive(globalRoot);     // "pyramide" : émissive de nuit seulement
     collectGlobalLights(globalRoot);        // lumières "global-light" : disques seulement
     globalGlbLoaded = true;
     cb(true);
@@ -2849,6 +2957,8 @@ function onSiteLoaded(){
   if(gazonMatRef && gazonMatRef.color) roofInsetColor = gazonMatRef.color.getHex();
   fixProceduralMaterials(); // avant tout le reste : le gabarit d'arbre doit récupérer le matériau déjà corrigé
   simplifyGroundMaterials(siteRoot); // après fixProceduralMaterials (feuillage) et setupStaticWindowMaterials
+  setupFacadeGlowMaterials(siteRoot);
+  setupNightOnlyEmissive(siteRoot);
   if(polyParts.length){
     polyParts.forEach(p=>{ p.visible = true; p.receiveShadow = true; });
     // Le matériau natif de "polygone_implantation" dans le .glb est en réalité
@@ -3333,14 +3443,17 @@ const GROUND_LAMBERT_GAIN = 1.15;
 // à midi au solstice d'hiver : PBR d'origine ≈ 115, Lambert seul ≈ 48,
 // Lambert + 0,5×couleur ≈ 119).
 const GROUND_AMBIENT_DAY = 0.5, GROUND_AMBIENT_NIGHT = 0.03;
+// Émissive de nuit plus marquée pour certaines surfaces (trottoirs, gazon) :
+// malgré les lampadaires, ces zones restaient trop sobres.
+const GROUND_AMBIENT_NIGHT_BY_NAME = { 'trottoire': 0.45, 'gazon': 0.2 };
 function applyGroundAmbient(){
-  const k = isNight ? GROUND_AMBIENT_NIGHT : GROUND_AMBIENT_DAY;
   const done = new Set();
   scene.traverse(o=>{
     if(!o.isMesh || !o.material) return;
     (Array.isArray(o.material) ? o.material : [o.material]).forEach(m=>{
       if(!m || done.has(m) || !m.isMeshLambertMaterial || !(m.userData && m.userData.simplifiedFrom)) return;
       done.add(m);
+      const k = isNight ? (GROUND_AMBIENT_NIGHT_BY_NAME[(m.name||'').toLowerCase()] ?? GROUND_AMBIENT_NIGHT) : GROUND_AMBIENT_DAY;
       m.emissive.copy(m.color).multiplyScalar(k); // (les clones d'arbres portent aussi le marqueur simplifiedFrom)
     });
   });
@@ -8188,7 +8301,7 @@ function updateNightLightsFocus(dt){
   else if(planViewActive) _nlFocus.copy(controls.target);
   else _nlFocus.lerpVectors(camera.position, controls.target, 0.6);
   worldRoot.worldToLocal(_nlFocus);
-  NightLights.updateNightLights(dt, _nlFocus, planViewActive ? orthoCamera : camera);
+  NightLights.updateNightLights(dt, _nlFocus, planViewActive ? orthoCamera : camera, scene.fog);
 }
 function animate(){
   requestAnimationFrame(animate);
