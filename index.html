@@ -432,6 +432,7 @@ import * as CameraSkyline from './src/camera-skyline.js';
 import * as CameraArchitect from './src/camera-architect.js';
 import * as Trees from './src/trees.js';
 import * as Amenagements from './src/amenagements.js';
+import * as NightLights from './src/night-lights.js';
 import * as Grass from './src/grass.js';
 import * as Labels from './src/labels.js';
 import * as DrawTool from './src/draw-tool.js';
@@ -1166,11 +1167,11 @@ let bldgHoverMaterial = null; // assigné plus bas (voir survol bâtiment) ; dé
 scene.background = new THREE.Color(0x101820);
 scene.fog = new THREE.Fog(0x101820, 420, 950); // brouillard allégé : commence plus loin pour rester lisible dézoomé, tout en restant présent en fond
 
-const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 3000);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.5, 3000);
 AppState.setCamera(camera);
 camera.position.set(140, 130, 170);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, logarithmicDepthBuffer: true });
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
 AppState.setRenderer(renderer);
 renderer.localClippingEnabled = true; // requis pour la disparition "haut vers bas" de la grue de chantier
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -1966,6 +1967,7 @@ function activateGlobalView(){
   siteRoot.traverse(o=>{ if(/icosph/i.test(o.name||'')) o.visible = false; });
   // Véhicules ET piétons de la simulation masqués (voitures, bus, trams, trains, piétons).
   routes.forEach(r=>{ r.vehicleGroup.visible = false; });
+  syncPedestrianLodVisibility();
   // Éclairage forcé "équinoxe, midi" + ciel bleu, quel que soit le réglage
   // choisi précédemment par l'utilisateur dans le panneau (restauré à la sortie).
   currentSeason = 'equinoxe';
@@ -2776,6 +2778,7 @@ function onSiteLoaded(){
   const gazonMatRef = findMaterialByName(siteRoot, 'gazon');
   if(gazonMatRef && gazonMatRef.color) roofInsetColor = gazonMatRef.color.getHex();
   fixProceduralMaterials(); // avant tout le reste : le gabarit d'arbre doit récupérer le matériau déjà corrigé
+  simplifyGroundMaterials(siteRoot); // après fixProceduralMaterials (feuillage) et setupStaticWindowMaterials
   if(polyParts.length){
     polyParts.forEach(p=>{ p.visible = true; p.receiveShadow = true; });
     // Le matériau natif de "polygone_implantation" dans le .glb est en réalité
@@ -3235,6 +3238,45 @@ function fixProceduralMaterials(root){
   // matériau du .glb serait exporté avec doubleSided à false malgré tout).
   forceDoubleSided(siteRoot);
 }
+/* ------------------------------------------------------------
+   ÉCLAIRAGE SIMPLE DU SOL ET DE LA VÉGÉTATION — PERFORMANCE.
+   Le sol (place, routes, trottoirs, gazon, passages piétons, rails) et les
+   arbres low-poly étaient en PBR complet (MeshStandardMaterial) : chaque
+   lumière est alors évaluée avec un modèle spéculaire GGX + reflets
+   d'environnement — coûteux (surtout la nuit, avec les lampadaires) et
+   inutile sur des surfaces mates : ça ne donnait qu'un aspect "glossy" du
+   sol (la place avait même metalness 0.5). Ces matériaux passent en
+   MeshLambertMaterial : éclairage diffus simple, sans reflets, sensiblement
+   moins cher par pixel. Les façades, vitres et l'aluminium restent en PBR.
+   Un seul remplaçant par matériau d'origine (les matériaux partagés le
+   restent).
+   ------------------------------------------------------------ */
+const GROUND_SIMPLE_MATERIAL_RE = /^(PLACE BERAUDIER|ROUTE|TROTTOIRE|gazon|ppx|ppy|rails|Mat[ée]riau\.001|tronc|feuillage)$/i;
+const GROUND_LAMBERT_GAIN = 1.2; // compense la perte d'éclairage d'environnement (IBL) du PBR, ajustable
+function toLambert(m){
+  const l = new THREE.MeshLambertMaterial({
+    name:m.name, color:m.color.clone().multiplyScalar(GROUND_LAMBERT_GAIN), map:m.map, alphaMap:m.alphaMap,
+    transparent:m.transparent, opacity:m.opacity, alphaTest:m.alphaTest, side:m.side, depthWrite:m.depthWrite,
+    flatShading:m.flatShading, vertexColors:m.vertexColors, fog:m.fog,
+    emissive:m.emissive ? m.emissive.clone() : undefined, emissiveIntensity:m.emissiveIntensity, emissiveMap:m.emissiveMap,
+  });
+  l.userData = { ...m.userData, simplifiedFrom: m.uuid };
+  return l;
+}
+function simplifyGroundMaterials(root){
+  const cache = new Map();
+  const conv = m=>{
+    if(!m || !m.isMeshStandardMaterial || m.isMeshPhysicalMaterial) return m;
+    if(m.userData && m.userData.nightWindowUniforms) return m; // fenêtres de nuit : gardent leur shader PBR
+    if(!GROUND_SIMPLE_MATERIAL_RE.test(m.name||'')) return m;
+    if(!cache.has(m)) cache.set(m, toLambert(m));
+    return cache.get(m);
+  };
+  root.traverse(o=>{
+    if(!o.isMesh || !o.material) return;
+    o.material = Array.isArray(o.material) ? o.material.map(conv) : conv(o.material);
+  });
+}
 // Force côté double sur tous les matériaux d'un sous-arbre — appelée après
 // fixProceduralMaterials() (maquette de base) et après le chargement de
 // global.glb (voir loadGlobalGlbIfNeeded), pour qu'aucune face ne devienne
@@ -3265,6 +3307,7 @@ Trees.initTrees({
    AMÉNAGEMENTS — module externalisé (src/amenagements.js) : fontaine,
    lampadaires… (assets.glb) posés dans le polygone d'implantation.
    ============================================================ */
+NightLights.initNightLights(); // pool de lumières de nuit (voir src/night-lights.js)
 Amenagements.initAmenagements({
   cancelDraw: DrawTool.cancelDraw, closeDrawMenu: DrawTool.closeDrawMenu, stopTreeTool: Trees.stopTreeTool,
   stopGrassTool: Grass.stopGrassTool, stopLabelTool: Labels.stopLabelTool, stopEditBuildingShape,
@@ -6064,6 +6107,7 @@ btnToggleGrid.addEventListener('click', ()=>{
 let siteLights = [];
 function collectSiteLights(){
   siteLights = [];
+  NightLights.unregisterSourcesWithPrefix('site:');
   // On sépare point/spot (candela) des directionnelles (lux) : les unités
   // glTF sont différentes selon le type, on les ramène chacune à une échelle
   // raisonnable séparément.
@@ -6104,10 +6148,26 @@ function collectSiteLights(){
     // perf pour un gain visuel quasi nul à cette échelle. Le .glb ne devrait
     // pas en exporter, mais on ne compte pas sur ce défaut.
     o.castShadow = false;
-    siteLights.push(o);
+    if(o.isPointLight || o.isSpotLight){
+      // PERFORMANCE : les lumières ponctuelles ne sont PLUS allumées telles
+      // quelles (43 lumières évaluées par pixel = ~18 ms de GPU par image la
+      // nuit, et une recompilation de tous les shaders à chaque ajout). Elles
+      // deviennent des "sources" du pool de lumières de nuit (src/night-
+      // lights.js) : un nombre fixe de vraies lumières suit les lampadaires
+      // les plus proches de la vue. L'objet d'origine reste éteint en
+      // permanence et n'est pas inscrit dans siteLights.
+      const wp = o.getWorldPosition(new THREE.Vector3());
+      worldRoot.worldToLocal(wp);
+      NightLights.registerSource('site:' + siteLightSeq++, wp, { color:o.color.getHex(), intensity:o.intensity, distance:o.distance, decay:o.decay });
+      o.visible = false;
+    } else {
+      siteLights.push(o);
+    }
   });
   siteLights.forEach(l=> l.visible = isNight);
+  NightLights.setNightActive(isNight);
 }
+let siteLightSeq = 0;
 // NOTE : un plafonnement dynamique du nombre de lampadaires actifs (par
 // distance à la caméra, recalculé en continu) a été essayé ici puis retiré —
 // le passage d'une lampe de l'état visible à invisible en cours de
@@ -6266,7 +6326,7 @@ function ensureDayVisualEnvironment(){
   scene.environment = dayEnvTexture;
   renderer.toneMappingExposure = 0.85;
   siteLights.forEach(l=> l.visible = false);
-  Amenagements.setNightState(false);
+  NightLights.setNightActive(false);
 }
 function ensureNightVisualEnvironment(){
   sun.visible = false;
@@ -6276,7 +6336,7 @@ function ensureNightVisualEnvironment(){
   renderer.toneMappingExposure = 1.0;
   paintSkyGradient(NIGHT_GRADIENT[0], NIGHT_GRADIENT[1]);
   siteLights.forEach(l=> l.visible = true);
-  Amenagements.setNightState(true);
+  NightLights.setNightActive(true);
 }
 // Applique le mode Jour à une heure solaire précise (continue) — passer
 // heavy:true lors d'une entrée depuis la Nuit (reconstruit l'environnement),
@@ -6304,7 +6364,7 @@ function applyDayAtHour(hourDecimal, opts){
 // Vue Globale ; sans effet visible si tout était déjà en ordre.
 function refreshNightLighting(){
   siteLights.forEach(l=> l.visible = isNight);
-  Amenagements.setNightState(isNight);
+  NightLights.setNightActive(isNight);
   staticWindowMaterials.forEach(({material})=> secureNightWindowShader(material));
   glassEmissiveMaterials.forEach(m=> secureNightWindowShader(m));
   applyVehicleLightState();
@@ -7150,6 +7210,7 @@ function instantiatePedestrianFromTemplate(){
   if(byCategory.pant)   byCategory.pant.color.setHex(pant);
   if(byCategory.shoes)  byCategory.shoes.color.setHex(shoes);
 
+  obj.userData.pedColors = { skin, tshirt, pant }; // réutilisées par le LOD lointain (voir ensurePedestrianLod)
   let mixer = null;
   if(peopleAnimClips.length){
     mixer = new THREE.AnimationMixer(obj);
@@ -7272,8 +7333,90 @@ function createRoute(points, type, name){
 // déplace sur sa route, mais le cycle de marche est figé — invisible à
 // l'œil à cette distance, et ça évite de faire tourner des dizaines de
 // squelettes (skinning) hors champ ou trop petits pour être perçus.
-const PIETON_ANIM_CULL_DIST_SQ = 120*120;
+const PIETON_ANIM_CULL_DIST_SQ = 55*55;
+
+/* ------------------------------------------------------------
+   LOD DES PIÉTONS — PERFORMANCE.
+   Audit : ~240 piétons × 12 maillages (bras, jambes, tête à ~520 triangles...)
+   = ~2 850 draw calls et ~530 000 triangles par image, soit l'essentiel du
+   coût CPU de la scène (mesuré : ~25 ms sur 33 ms par image de jour).
+   Au-delà de PED_FULL_RIG_DIST_SQ de la caméra, un piéton n'est plus rendu par
+   son rig animé mais par une silhouette lowpoly (jambes / torse / tête, aux
+   couleurs de ses vêtements) : 3 InstancedMesh partagés par TOUS les piétons
+   lointains, soit 3 draw calls au total. À cette distance (>55 m) un piéton
+   fait quelques pixels : la différence n'est pas perceptible, et seuls les
+   piétons proches gardent la démarche animée complète.
+   ------------------------------------------------------------ */
+const PED_FULL_RIG_DIST_SQ = 55*55;
+const PED_LOD_CAPACITY = 1500;
+let pedLod = null; // { group, meshes:[legs,torso,head], free:[slots], shown:Uint8Array }
+const _pedM = new THREE.Matrix4(), _pedS = new THREE.Vector3(1,1,1), _pedZero = new THREE.Matrix4().makeScale(0,0,0);
+const _pedC = new THREE.Color();
+function ensurePedestrianLod(){
+  if(pedLod || !peopleTemplate) return pedLod;
+  // Dimensions du piéton d'origine (repère local, hors position du nœud).
+  const t = peopleTemplate.clone(true); t.position.set(0,0,0); t.quaternion.identity(); t.updateMatrixWorld(true);
+  const bb = new THREE.Box3().setFromObject(t);
+  const H = Math.max(0.5, bb.max.y - bb.min.y), y0 = bb.min.y;
+  const cx = (bb.min.x+bb.max.x)/2, cz = (bb.min.z+bb.max.z)/2;
+  function part(w, h, d, yBottom){
+    const g = new THREE.BoxGeometry(w*H, h*H, d*H);
+    g.translate(cx, y0 + (yBottom + h/2)*H, cz);
+    const m = new THREE.InstancedMesh(g, new THREE.MeshLambertMaterial({ color:0xffffff }), PED_LOD_CAPACITY);
+    m.castShadow = false; m.receiveShadow = false;
+    m.frustumCulled = false; // les instances sont partout : pas de sphère englobante utile
+    m.count = PED_LOD_CAPACITY;
+    for(let i=0;i<PED_LOD_CAPACITY;i++){ m.setMatrixAt(i, _pedZero); m.setColorAt(i, _pedC.setHex(0x888888)); }
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    return m;
+  }
+  const group = new THREE.Group(); group.name = 'pedestrianLod';
+  const meshes = [
+    part(0.19, 0.47, 0.115, 0.0),   // jambes
+    part(0.26, 0.34, 0.14, 0.47),   // torse
+    part(0.125, 0.14, 0.125, 0.83), // tête
+  ];
+  meshes.forEach(m=> group.add(m));
+  worldRoot.add(group);
+  const free = []; for(let i=PED_LOD_CAPACITY-1;i>=0;i--) free.push(i);
+  pedLod = { group, meshes, free, shown: new Uint8Array(PED_LOD_CAPACITY) };
+  return pedLod;
+}
+function pedestrianLodSet(slot, position, quaternion, colors){
+  _pedM.compose(position, quaternion, _pedS);
+  pedLod.meshes.forEach(m=> m.setMatrixAt(slot, _pedM));
+  if(!pedLod.shown[slot] && colors){
+    pedLod.meshes[0].setColorAt(slot, _pedC.setHex(colors.pant));
+    pedLod.meshes[1].setColorAt(slot, _pedC.setHex(colors.tshirt));
+    pedLod.meshes[2].setColorAt(slot, _pedC.setHex(colors.skin));
+    pedLod.meshes.forEach(m=>{ m.instanceColor.needsUpdate = true; });
+  }
+  pedLod.shown[slot] = 1;
+}
+function pedestrianLodHide(slot){
+  if(!pedLod.shown[slot]) return;
+  pedLod.meshes.forEach(m=> m.setMatrixAt(slot, _pedZero));
+  pedLod.shown[slot] = 0;
+}
+function pedestrianLodRelease(agent){
+  if(!pedLod || agent.lodSlot === undefined || agent.lodSlot === null) return;
+  pedestrianLodHide(agent.lodSlot);
+  pedLod.meshes.forEach(m=>{ m.instanceMatrix.needsUpdate = true; });
+  pedLod.free.push(agent.lodSlot);
+  agent.lodSlot = null;
+}
+function releaseRoutePedestrians(r){
+  if(r && r.type === 'pieton') r.agents.forEach(pedestrianLodRelease);
+}
+// Le groupe de silhouettes suit la visibilité des voies de piétons (case à
+// cocher "Piétons", mode Architecte, Vue Globale...) — voir
+// applyAgentTypeVisibility() et activateGlobalView().
+function syncPedestrianLodVisibility(){
+  if(pedLod) pedLod.group.visible = routes.some(r=> r.type==='pieton' && r.vehicleGroup.visible);
+}
 function tickAgents(dt){
+  syncPedestrianLodVisibility();
+  let lodTouched = false;
   for(const r of routes){
     const len = r.curve.getLength();
     if(len<=0) continue;
@@ -7306,11 +7449,28 @@ function tickAgents(dt){
       // Culling par distance : pour les piétons trop loin de la caméra, on
       // saute la mise à jour du mixer (coûteuse : skinning du squelette)
       // sans arrêter le déplacement du personnage sur sa route.
-      if(a.mixer && (r.type!=='pieton' || m.position.distanceToSquared(camera.position) < PIETON_ANIM_CULL_DIST_SQ)){
-        a.mixer.update(dt); // avance le cycle de marche (bras/jambes) du piéton
+      if(r.type==='pieton'){
+        // LOD : rig animé complet de près, silhouette instanciée de loin.
+        if(a.lodSlot === undefined){
+          const lod = ensurePedestrianLod();
+          a.lodSlot = (lod && lod.free.length) ? lod.free.pop() : null; // null : pas de LOD (rig complet en permanence)
+        }
+        const near = a.lodSlot === null || m.position.distanceToSquared(camera.position) < PED_FULL_RIG_DIST_SQ;
+        if(near){
+          if(!m.visible) m.visible = true;
+          if(a.lodSlot !== null && pedLod.shown[a.lodSlot]){ pedestrianLodHide(a.lodSlot); lodTouched = true; }
+          if(a.mixer) a.mixer.update(dt); // avance le cycle de marche (bras/jambes) du piéton
+        } else {
+          if(m.visible) m.visible = false;
+          pedestrianLodSet(a.lodSlot, m.position, m.quaternion, m.userData.pedColors);
+          lodTouched = true;
+        }
+      } else if(a.mixer){
+        a.mixer.update(dt);
       }
     });
   }
+  if(lodTouched) pedLod.meshes.forEach(mm=>{ mm.instanceMatrix.needsUpdate = true; });
 }
 
 // Un train ne boucle pas en continu sur sa voie comme les autres véhicules :
@@ -7370,6 +7530,7 @@ function tickTrainRoute(r, len, dt){
 
 function clearRoutes(){
   routes.forEach(r=>{
+    releaseRoutePedestrians(r);
     worldRoot.remove(r.vehicleGroup); worldRoot.remove(r.line);
     r.line.geometry.dispose(); r.line.material.dispose();
   });
@@ -7379,6 +7540,7 @@ function clearRoutes(){
 function deleteRoute(id){
   const r = routes.find(x=>x.id===id);
   if(!r) return;
+  releaseRoutePedestrians(r);
   worldRoot.remove(r.vehicleGroup); worldRoot.remove(r.line);
   r.line.geometry.dispose(); r.line.material.dispose();
   routes = routes.filter(x=>x.id!==id);
@@ -7475,6 +7637,7 @@ function applyAgentTypeVisibility(){
   routes.forEach(r=>{
     r.vehicleGroup.visible = (r.type==='pieton') ? pedestriansVisible : vehiclesVisible;
   });
+  syncPedestrianLodVisibility();
 }
 document.getElementById('chk-vis-vehicles').addEventListener('change', (e)=>{
   vehiclesVisible = e.target.checked;
@@ -7690,6 +7853,18 @@ setupEyeToggle('eye-btn-labels',
   ()=> Labels.getLabelsVisible(),
   (v)=> Labels.setLabelsVisible(v));
 
+// Réaffecte le pool de lumières de nuit aux lampadaires les plus utiles à la
+// vue courante : point regardé (60 % du chemin caméra → cible en orbite, la
+// caméra elle-même en mode piéton / vol libre).
+const _nlFocus = new THREE.Vector3();
+function updateNightLightsFocus(dt){
+  if(!isNight) return;
+  if(pedestrianModeActive || globalViewActive) _nlFocus.copy(camera.position);
+  else if(planViewActive) _nlFocus.copy(controls.target);
+  else _nlFocus.lerpVectors(camera.position, controls.target, 0.6);
+  worldRoot.worldToLocal(_nlFocus);
+  NightLights.updateNightLights(dt, _nlFocus, planViewActive ? orthoCamera : camera);
+}
 function animate(){
   requestAnimationFrame(animate);
   const dt = Math.min(clock.getDelta(), 0.1);
@@ -7705,6 +7880,7 @@ function animate(){
   // est lancée pendant une pause, elle reste figée à son état de départ
   // (grue posée, aucun étage encore sorti de terre) jusqu'au "Reprendre".
   if(!simulationPaused) updateConstructions(dt);
+  updateNightLightsFocus(dt);
   updateCompass();
   Labels.updateLabelPositions();
   DrawTool.updateDrawAreaLabel();
