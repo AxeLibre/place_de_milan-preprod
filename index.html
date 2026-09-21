@@ -3252,7 +3252,28 @@ function fixProceduralMaterials(root){
    restent).
    ------------------------------------------------------------ */
 const GROUND_SIMPLE_MATERIAL_RE = /^(PLACE BERAUDIER|ROUTE|TROTTOIRE|gazon|ppx|ppy|rails|Mat[ée]riau\.001|tronc|feuillage)$/i;
-const GROUND_LAMBERT_GAIN = 1.2; // compense la perte d'éclairage d'environnement (IBL) du PBR, ajustable
+const GROUND_LAMBERT_GAIN = 1.15;
+// Ambiant de remplacement : un matériau PBR reçoit en plus l'éclairage diffus
+// de l'ENVIRONNEMENT (scene.environment, IBL) — très fort le jour (pièce
+// "RoomEnvironment"), quasi nul la nuit. Lambert n'en reçoit pas : sans
+// compensation, le sol devenait beaucoup trop sombre de jour (surtout au
+// solstice d'hiver, soleil bas). On le remplace par une émissive proportionnelle
+// à la couleur du matériau, calibrée par MESURE (luminosité moyenne d'une vue
+// à midi au solstice d'hiver : PBR d'origine ≈ 115, Lambert seul ≈ 48,
+// Lambert + 0,5×couleur ≈ 119).
+const GROUND_AMBIENT_DAY = 0.5, GROUND_AMBIENT_NIGHT = 0.03;
+function applyGroundAmbient(){
+  const k = isNight ? GROUND_AMBIENT_NIGHT : GROUND_AMBIENT_DAY;
+  const done = new Set();
+  scene.traverse(o=>{
+    if(!o.isMesh || !o.material) return;
+    (Array.isArray(o.material) ? o.material : [o.material]).forEach(m=>{
+      if(!m || done.has(m) || !m.isMeshLambertMaterial || !(m.userData && m.userData.simplifiedFrom)) return;
+      done.add(m);
+      m.emissive.copy(m.color).multiplyScalar(k); // (les clones d'arbres portent aussi le marqueur simplifiedFrom)
+    });
+  });
+}
 function toLambert(m){
   const l = new THREE.MeshLambertMaterial({
     name:m.name, color:m.color.clone().multiplyScalar(GROUND_LAMBERT_GAIN), map:m.map, alphaMap:m.alphaMap,
@@ -3276,6 +3297,7 @@ function simplifyGroundMaterials(root){
     if(!o.isMesh || !o.material) return;
     o.material = Array.isArray(o.material) ? o.material.map(conv) : conv(o.material);
   });
+  applyGroundAmbient();
 }
 // Force côté double sur tous les matériaux d'un sous-arbre — appelée après
 // fixProceduralMaterials() (maquette de base) et après le chargement de
@@ -6345,6 +6367,7 @@ function ensureDayVisualEnvironment(){
   renderer.toneMappingExposure = 0.85;
   siteLights.forEach(l=> l.visible = false);
   NightLights.setNightActive(false);
+  applyGroundAmbient();
 }
 function ensureNightVisualEnvironment(){
   sun.visible = false;
@@ -6355,6 +6378,7 @@ function ensureNightVisualEnvironment(){
   paintSkyGradient(NIGHT_GRADIENT[0], NIGHT_GRADIENT[1]);
   siteLights.forEach(l=> l.visible = true);
   NightLights.setNightActive(true);
+  applyGroundAmbient();
 }
 // Applique le mode Jour à une heure solaire précise (continue) — passer
 // heavy:true lors d'une entrée depuis la Nuit (reconstruit l'environnement),
@@ -6383,6 +6407,7 @@ function applyDayAtHour(hourDecimal, opts){
 function refreshNightLighting(){
   siteLights.forEach(l=> l.visible = isNight);
   NightLights.setNightActive(isNight);
+  applyGroundAmbient();
   staticWindowMaterials.forEach(({material})=> secureNightWindowShader(material));
   glassEmissiveMaterials.forEach(m=> secureNightWindowShader(m));
   applyVehicleLightState();
