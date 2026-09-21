@@ -28,20 +28,21 @@ import * as THREE from "three";
 import { worldRoot } from './state.js';
 
 export const POOL_SIZE = 8;
-const FADE_SECONDS = 0.3;
+const FADE_SECONDS = 1.1;           // durée d'un fondu complet d'une lumière du pool (allumage ou extinction), adouci en S
 const OUT_OF_VIEW_PENALTY = 6;      // multiplicateur de distance² pour une source hors champ
 const HYSTERESIS = 0.7;             // une source déjà allumée garde sa place tant que score×0.7 reste dans le top N
 const POOL_CAPACITY = 128;          // nombre max de flaques (sources)
-const MAX_INTENSITY = 60;           // plus forte intensité gérée (sert au calcul de la vitesse de fondu)
-const PUDDLE_STRENGTH = 5;          // luminosité des flaques (réglable : plus haut = sol plus éclairé)
+const PUDDLE_STRENGTH = 5;          // couche MULTIPLICATIVE : sol × (1 + lumière) — même teinte qu'une vraie lumière
+const PUDDLE_GLOW = 0.55;           // couche ADDITIVE : lueur visible même sur l'asphalte sombre (que la couche multiplicative n'éclaire presque pas)
+const PUDDLE_GLOW_SATURATION = 1.5; // >1 : teinte de la lueur additive plus saturée (plus chaude), pour ne pas virer au blanc/froid
 const PUDDLE_LIT_DIMMING = 0.6;     // atténuation de la flaque quand une vraie lumière éclaire déjà cette zone
 const PUDDLE_LIFT = 0.06;           // m au-dessus du sol, évite le z-fighting
 
 const sources = new Map();          // id -> { id, pos:Vector3 (repère de worldRoot), groundY, color:Color, intensity, distance, decay }
 let poolGroup = null;
-let pool = [];                      // { light, src, cur, target }
+let pool = [];                      // { light, src, f (progression du fondu 0..1) }
 let active = false;
-let puddles = null, puddleIndex = new Map(), puddlesDirty = true;
+let puddles = null, puddlesGlow = null, puddleIndex = new Map(), puddlesDirty = true;
 const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _sc = new THREE.Vector3(), _c = new THREE.Color();
 
 // Rayon de la flaque selon la puissance de la lampe (18 → ~17 m, 60 → ~27 m).
@@ -78,7 +79,7 @@ export function initNightLights(){
     light.castShadow = false;
     light.visible = false; // (dés)activé UNIQUEMENT par setNightActive : jamais en cours de nuit
     poolGroup.add(light);
-    pool.push({ light, src:null, cur:0, target:0 });
+    pool.push({ light, src:null, f:0 });
   }
   const geo = new THREE.PlaneGeometry(1, 1);
   geo.rotateX(-Math.PI/2);
@@ -94,15 +95,29 @@ export function initNightLights(){
     blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
-  puddles = new THREE.InstancedMesh(geo, mat, POOL_CAPACITY);
-  puddles.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  for(let i=0;i<POOL_CAPACITY;i++) puddles.setColorAt(i, _c.setRGB(0,0,0));
-  puddles.count = 0;
-  puddles.frustumCulled = false;
-  puddles.renderOrder = 4;
-  puddles.castShadow = false; puddles.receiveShadow = false;
-  puddles.visible = false;
-  worldRoot.add(puddles);
+  const tex = mat.map;
+  // Deuxième couche : lueur ADDITIVE. La couche multiplicative reproduit la
+  // teinte d'une vraie lumière, mais n'éclaire presque pas un sol très sombre
+  // (asphalte) — la flaque devenait quasi invisible, surtout en vue de dessus.
+  const glowMat = new THREE.MeshBasicMaterial({
+    map: tex, color: 0xffffff, transparent: true, depthWrite: false, fog: true,
+    blending: THREE.AdditiveBlending,
+    polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+  });
+  function makeLayer(material, order){
+    const m = new THREE.InstancedMesh(geo, material, POOL_CAPACITY);
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    for(let i=0;i<POOL_CAPACITY;i++) m.setColorAt(i, _c.setRGB(0,0,0));
+    m.count = 0;
+    m.frustumCulled = false;
+    m.renderOrder = order;
+    m.castShadow = false; m.receiveShadow = false;
+    m.visible = false;
+    worldRoot.add(m);
+    return m;
+  }
+  puddles = makeLayer(mat, 4);
+  puddlesGlow = makeLayer(glowMat, 5);
 }
 
 // `opts.groundY` : altitude du sol sous la lampe (mesurée par l'appelant) ;
@@ -145,15 +160,16 @@ export function sourceCount(){ return sources.size; }
 // nombre de lumières du shader ne varie donc qu'ici (une recompilation, déjà
 // masquée par le spinner de la bascule jour/nuit), jamais à la pose d'un
 // lampadaire ni pendant la navigation.
+function setPuddlesVisible(on){ if(puddles){ puddles.visible = on; puddlesGlow.visible = on; } }
 export function setNightActive(on){
   on = !!on;
-  if(on === active && pool.length){ if(puddles) puddles.visible = on; return; }
+  if(on === active && pool.length){ setPuddlesVisible(on); return; }
   active = on;
   pool.forEach(p=>{
     p.light.visible = on;
-    p.src = null; p.cur = 0; p.target = 0; p.light.intensity = 0;
+    p.src = null; p.f = 0; p.light.intensity = 0;
   });
-  if(puddles) puddles.visible = on;
+  setPuddlesVisible(on);
   puddlesDirty = true;
 }
 export function isNightActive(){ return active; }
@@ -188,24 +204,27 @@ export function updateNightLights(dt, focus, cam){
   ranked.sort((a,b)=> a.score - b.score);
   const wanted = new Set(ranked.slice(0, POOL_SIZE).map(r=>r.s.id));
 
-  // 2. Fondu des lumières déjà affectées ; libération de celles éteintes.
-  const rate = MAX_INTENSITY / FADE_SECONDS; // intensité par seconde
+  // 2. Fondu (allumage / extinction) des lumières affectées, adouci en S. Une
+  // lumière dont la source n'est plus voulue s'éteint PROGRESSIVEMENT avant
+  // d'être libérée ; si elle redevient voulue entre-temps, elle se rallume
+  // depuis son niveau actuel (pas de saut).
+  const step = dt / FADE_SECONDS;
   pool.forEach(p=>{
-    if(p.src && (!sources.has(p.src.id) || !wanted.has(p.src.id))) p.target = 0;
-    else if(p.src) p.target = p.src.intensity;
-    if(p.cur < p.target) p.cur = Math.min(p.target, p.cur + rate*dt);
-    else if(p.cur > p.target) p.cur = Math.max(p.target, p.cur - rate*dt);
-    p.light.intensity = p.cur;
-    if(p.src && p.target === 0 && p.cur <= 0.001){ p.src = null; p.cur = 0; }
+    if(!p.src){ p.light.intensity = 0; return; }
+    const want = sources.has(p.src.id) && wanted.has(p.src.id);
+    p.f = want ? Math.min(1, p.f + step) : Math.max(0, p.f - step);
+    p.light.intensity = p.src.intensity * (p.f*p.f*(3 - 2*p.f));
+    if(!want && p.f <= 0){ p.src = null; p.light.intensity = 0; }
   });
 
   // 3. Affecte les sources voulues qui n'ont pas encore de lumière.
-  const assigned = new Set(); pool.forEach(p=>{ if(p.src && p.target > 0) assigned.add(p.src.id); });
+  const assigned = new Set(); pool.forEach(p=>{ if(p.src) assigned.add(p.src.id); });
   for(const r of ranked){
     if(!wanted.has(r.s.id) || assigned.has(r.s.id)) continue;
     const slot = pool.find(p=> !p.src);
     if(!slot) break; // toutes occupées (fondus en cours) : au prochain passage
-    slot.src = r.s; slot.cur = 0; slot.target = r.s.intensity;
+    slot.src = r.s; slot.f = 0;
+    slot.light.intensity = 0;
     slot.light.position.copy(r.s.pos);
     slot.light.color.copy(r.s.color);
     slot.light.distance = r.s.distance;
@@ -214,18 +233,28 @@ export function updateNightLights(dt, focus, cam){
   }
 
   // 4. Atténue la flaque des sources qui ont (en cours d'allumage) une vraie
-  // lumière : elles éclairent déjà réellement ce qui les entoure.
+  // lumière : elles éclairent déjà réellement ce qui les entoure. Suit le même
+  // fondu que la lumière, donc la flaque s'estompe pendant qu'elle s'allume.
   const lit = new Map();
-  pool.forEach(p=>{ if(p.src && p.src.intensity > 0) lit.set(p.src.id, Math.min(1, p.cur / p.src.intensity)); });
+  pool.forEach(p=>{ if(p.src) lit.set(p.src.id, p.f*p.f*(3 - 2*p.f)); });
   let touched = false;
   puddleIndex.forEach((i, id)=>{
     const s = sources.get(id); if(!s) return;
     const f = 1 - PUDDLE_LIT_DIMMING * (lit.get(id) || 0);
-    const k = PUDDLE_STRENGTH * f * Math.min(1.6, Math.sqrt(s.intensity / 18));
+    const pw = Math.min(1.6, Math.sqrt(s.intensity / 18)) * f;
+    const k = PUDDLE_STRENGTH * pw;
     puddles.setColorAt(i, _c.setRGB(s.color.r * k, s.color.g * k, s.color.b * k));
+    const g = PUDDLE_GLOW * pw;
+    puddlesGlow.setColorAt(i, _c.setRGB(
+      Math.pow(s.color.r, PUDDLE_GLOW_SATURATION) * g,
+      Math.pow(s.color.g, PUDDLE_GLOW_SATURATION) * g,
+      Math.pow(s.color.b, PUDDLE_GLOW_SATURATION) * g));
     touched = true;
   });
-  if(touched && puddles.instanceColor) puddles.instanceColor.needsUpdate = true;
+  if(touched){
+    if(puddles.instanceColor) puddles.instanceColor.needsUpdate = true;
+    if(puddlesGlow.instanceColor) puddlesGlow.instanceColor.needsUpdate = true;
+  }
 }
 
 // Flaques de toutes les sources (un seul draw call).
@@ -240,9 +269,11 @@ function rebuildPuddles(){
     _sc.set(r*2, 1, r*2);
     _m4.compose(_p, _q.identity(), _sc);
     puddles.setMatrixAt(i, _m4);
+    puddlesGlow.setMatrixAt(i, _m4);
     puddleIndex.set(s.id, i);
     i++;
   });
-  puddles.count = i;
+  puddles.count = i; puddlesGlow.count = i;
   puddles.instanceMatrix.needsUpdate = true;
+  puddlesGlow.instanceMatrix.needsUpdate = true;
 }
