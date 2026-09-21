@@ -17,11 +17,12 @@
 //    reprise en cours, puis quitte l'outil.
 //
 // Le lampadaire est en DEUX parties dans assets.glb : le mât (maillage
-// "lampadaire_mat") et la lumière (nœud "lampadaire_lumiere", une lumière
-// ponctuelle). Chaque lampadaire posé reçoit son propre mât + sa propre
-// lumière ponctuelle, allumée uniquement la nuit, et le nombre de
-// lampadaires est plafonné à MAX_LAMPADAIRES pour ne pas surcharger le GPU
-// (chaque lumière ponctuelle allumée s'ajoute au coût de TOUS les matériaux).
+// "lampadaire_mat") et la lumière (nœud "lampadaire_lumiere", dont seule la
+// POSITION est reprise). Chaque lampadaire posé reçoit son mât et s'inscrit
+// comme source du pool de lumières de nuit (src/night-lights.js) — pas de
+// PointLight propre : ajouter une lumière visible recompile tous les
+// matériaux (la pose ramait). Le nombre de lampadaires reste plafonné à
+// MAX_LAMPADAIRES.
 
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -35,6 +36,7 @@ import { pointInPolygon } from './geometry-utils.js';
 import { NEON_BLUE_CSS } from './config.js';
 import * as ExtGare from './extension-gare.js';
 import * as Trees from './trees.js';
+import * as NightLights from './night-lights.js';
 
 export const MAX_LAMPADAIRES = 10;
 const ASSETS_URL = './assets.glb';
@@ -194,28 +196,31 @@ function addAmenagement(type, x, y, z, rot, opts){
   const group = buildObject(type);
   group.position.set(x, y, z);
   group.rotation.y = rot;
-  let light = null;
-  if(tpl.lightOffset){
-    // La lumière du lampadaire : lumière ponctuelle propre à CE lampadaire,
-    // enfant du même groupe (elle suit donc déplacement et rotation), posée
-    // sous le bras du mât comme dans assets.glb.
-    light = new THREE.PointLight(0xffe4f2, LAMP_LIGHT.intensity, LAMP_LIGHT.distance, LAMP_LIGHT.decay);
-    light.castShadow = false;
-    light.position.copy(tpl.lightOffset);
-    // `getIsNight` n'est appelée qu'ici, à l'exécution (jamais à l'init : la
-    // variable côté index.html n'existe pas encore à ce moment-là).
-    nightOn = !!getIsNight();
-    light.visible = nightOn;
-    group.add(light);
-  }
   amenagementsGroup.add(group);
-  const rec = { id: idCounter++, type, group, x, y, z, rot, light };
+  const rec = { id: idCounter++, type, group, x, y, z, rot, light:null };
   amenagements.push(rec);
+  // La lumière du lampadaire (2e partie de l'asset, après le mât) n'est PLUS une
+  // PointLight propre à chaque lampadaire : ajouter/retirer une lumière visible
+  // recompile tous les matériaux de la scène (c'était ce qui faisait ramer la
+  // pose). Le lampadaire s'inscrit comme "source" du pool de lumières de nuit
+  // (src/night-lights.js), qui n'a qu'un nombre fixe de vraies lumières.
+  syncLamp(rec);
   refreshMenu();
   return rec;
 }
+// Position monde (repère de worldRoot) de la lumière d'un lampadaire, sous le
+// bras du mât : décalage local de assets.glb, tourné avec le lampadaire.
+const _lampPos = new THREE.Vector3();
+function syncLamp(rec){
+  const tpl = templates[rec.type];
+  if(!tpl || !tpl.lightOffset) return;
+  _lampPos.copy(tpl.lightOffset).applyAxisAngle(new THREE.Vector3(0,1,0), rec.rot).add(rec.group.position);
+  const id = 'am:' + rec.id;
+  NightLights.registerSource(id, _lampPos, { color:0xffe4f2, intensity:LAMP_LIGHT.intensity, distance:LAMP_LIGHT.distance, decay:LAMP_LIGHT.decay });
+}
 function removeAmenagement(rec){
   if(!rec) return;
+  NightLights.unregisterSource('am:' + rec.id);
   amenagementsGroup.remove(rec.group);
   materialsOf(rec.group).forEach(m=> m.dispose());
   amenagements = amenagements.filter(a=>a!==rec);
@@ -480,6 +485,7 @@ function cancelCarry(quiet){
   rec.x = o.x; rec.y = o.y; rec.z = o.z; rec.rot = o.rot;
   rec.group.position.set(o.x, o.y, o.z);
   rec.group.rotation.y = o.rot;
+  syncLamp(rec);
   tintInvalid(rec.group, false);
   resetCarrying();
   hideHalos();
@@ -491,6 +497,7 @@ function moveCarriedTo(pt){
   const rec = carrying;
   rec.x = pt.x; rec.y = pt.y; rec.z = pt.z;
   rec.group.position.set(pt.x, pt.y, pt.z);
+  syncLamp(rec);
   revalidateCarried();
 }
 function revalidateCarried(){
@@ -550,6 +557,7 @@ function applyRotation(target, rot){
   } else if(target.kind === 'carry'){
     target.rec.rot = rot;
     target.rec.group.rotation.y = rot;
+    syncLamp(target.rec);
     revalidateCarried();
   } else {
     // Aménagement posé qu'on survole : on refuse une rotation qui ferait
@@ -562,6 +570,7 @@ function applyRotation(target, rot){
     }
     rec.rot = rot;
     rec.group.rotation.y = rot;
+    syncLamp(rec);
   }
   return true;
 }
