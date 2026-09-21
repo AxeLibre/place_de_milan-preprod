@@ -6158,7 +6158,7 @@ function collectSiteLights(){
       // permanence et n'est pas inscrit dans siteLights.
       const wp = o.getWorldPosition(new THREE.Vector3());
       worldRoot.worldToLocal(wp);
-      NightLights.registerSource('site:' + siteLightSeq++, wp, { color:o.color.getHex(), intensity:o.intensity, distance:o.distance, decay:o.decay });
+      NightLights.registerSource('site:' + siteLightSeq++, wp, { color:o.color.getHex(), intensity:o.intensity, distance:o.distance, decay:o.decay, groundY:groundYUnder(wp) });
       o.visible = false;
     } else {
       siteLights.push(o);
@@ -6168,6 +6168,24 @@ function collectSiteLights(){
   NightLights.setNightActive(isNight);
 }
 let siteLightSeq = 0;
+// Altitude de la surface horizontale située sous une lampe (sol, quai, toit) :
+// sert à poser sa flaque de lumière. Un rayon vers le bas, en ignorant les
+// faces non horizontales et le mât/la tête de la lampe elle-même (< 0,8 m).
+const _lampRay = new THREE.Raycaster();
+const _lampRayDir = new THREE.Vector3(0,-1,0);
+const _lampRayN = new THREE.Vector3();
+function groundYUnder(wp){
+  _lampRay.set(new THREE.Vector3(wp.x, wp.y + 0.3, wp.z), _lampRayDir);
+  _lampRay.far = 40;
+  const hits = _lampRay.intersectObject(siteRoot, true);
+  for(const h of hits){
+    if(h.distance < 0.8 || !h.face) continue;
+    _lampRayN.copy(h.face.normal).transformDirection(h.object.matrixWorld);
+    if(_lampRayN.y < 0.6) continue;
+    return h.point.y;
+  }
+  return wp.y - 4;
+}
 // NOTE : un plafonnement dynamique du nombre de lampadaires actifs (par
 // distance à la caméra, recalculé en continu) a été essayé ici puis retiré —
 // le passage d'une lampe de l'état visible à invisible en cours de
@@ -7333,7 +7351,7 @@ function createRoute(points, type, name){
 // déplace sur sa route, mais le cycle de marche est figé — invisible à
 // l'œil à cette distance, et ça évite de faire tourner des dizaines de
 // squelettes (skinning) hors champ ou trop petits pour être perçus.
-const PIETON_ANIM_CULL_DIST_SQ = 55*55;
+const PIETON_ANIM_CULL_DIST_SQ = 55*55; // (ancien seuil, conservé pour référence : voir PED_FULL_RIG_*)
 
 /* ------------------------------------------------------------
    LOD DES PIÉTONS — PERFORMANCE.
@@ -7347,35 +7365,53 @@ const PIETON_ANIM_CULL_DIST_SQ = 55*55;
    fait quelques pixels : la différence n'est pas perceptible, et seuls les
    piétons proches gardent la démarche animée complète.
    ------------------------------------------------------------ */
-const PED_FULL_RIG_DIST_SQ = 55*55;
+// Distance (m) sous laquelle un piéton garde son rig animé complet ; au-delà de
+// PED_FULL_RIG_DIST + PED_FULL_RIG_HYST il passe en silhouette (hystérésis : pas
+// de va-et-vient au seuil). Plus grand = plus joli de loin, plus coûteux (chaque
+// rig proche = ~12 draw calls) ; 75 m : un bon compromis (100 m garde presque tous les piétons en rig complet à la vue par défaut).
+const PED_FULL_RIG_DIST = 75, PED_FULL_RIG_HYST = 10;
+const PED_FULL_RIG_DIST_SQ = PED_FULL_RIG_DIST*PED_FULL_RIG_DIST;
+const PED_FULL_RIG_FAR_SQ = (PED_FULL_RIG_DIST+PED_FULL_RIG_HYST)*(PED_FULL_RIG_DIST+PED_FULL_RIG_HYST);
 const PED_LOD_CAPACITY = 1500;
 let pedLod = null; // { group, meshes:[legs,torso,head], free:[slots], shown:Uint8Array }
 const _pedM = new THREE.Matrix4(), _pedS = new THREE.Vector3(1,1,1), _pedZero = new THREE.Matrix4().makeScale(0,0,0);
 const _pedC = new THREE.Color();
 function ensurePedestrianLod(){
   if(pedLod || !peopleTemplate) return pedLod;
-  // Dimensions du piéton d'origine (repère local, hors position du nœud).
+  // Silhouette calquée sur le VRAI modèle : une boîte par segment du gabarit
+  // people.glb (tête, corps, bras G/D, jambes G/D), dimensionnée d'après sa
+  // boîte englobante en pose de repos. Rôle de couleur : 0 = pantalon,
+  // 1 = t-shirt, 2/3 = peau (tête, bras).
   const t = peopleTemplate.clone(true); t.position.set(0,0,0); t.quaternion.identity(); t.updateMatrixWorld(true);
-  const bb = new THREE.Box3().setFromObject(t);
-  const H = Math.max(0.5, bb.max.y - bb.min.y), y0 = bb.min.y;
-  const cx = (bb.min.x+bb.max.x)/2, cz = (bb.min.z+bb.max.z)/2;
-  function part(w, h, d, yBottom){
-    const g = new THREE.BoxGeometry(w*H, h*H, d*H);
-    g.translate(cx, y0 + (yBottom + h/2)*H, cz);
+  const PARTS = [['leg_l',0],['leg_r',0],['body',1],['arm_l',3],['arm_r',3],['head',2]];
+  const specs = [];
+  PARTS.forEach(([name, role])=>{
+    const node = t.getObjectByName(name);
+    if(!node) return;
+    const bb = new THREE.Box3().setFromObject(node);
+    if(bb.isEmpty()) return;
+    const size = bb.getSize(new THREE.Vector3()), c = bb.getCenter(new THREE.Vector3());
+    specs.push({ role, size, c });
+  });
+  if(!specs.length){
+    // Gabarit sans les segments attendus : boîte unique de repli d'après la boîte globale.
+    const bb = new THREE.Box3().setFromObject(t);
+    if(bb.isEmpty()) return null;
+    specs.push({ role:1, size:bb.getSize(new THREE.Vector3()).multiply(new THREE.Vector3(0.5,1,0.5)), c:bb.getCenter(new THREE.Vector3()) });
+  }
+  const meshes = specs.map(({ role, size, c })=>{
+    const g = new THREE.BoxGeometry(Math.max(size.x,0.05), Math.max(size.y,0.05), Math.max(size.z,0.05));
+    g.translate(c.x, c.y, c.z);
     const m = new THREE.InstancedMesh(g, new THREE.MeshLambertMaterial({ color:0xffffff }), PED_LOD_CAPACITY);
+    m.userData.role = role;
     m.castShadow = false; m.receiveShadow = false;
     m.frustumCulled = false; // les instances sont partout : pas de sphère englobante utile
     m.count = PED_LOD_CAPACITY;
     for(let i=0;i<PED_LOD_CAPACITY;i++){ m.setMatrixAt(i, _pedZero); m.setColorAt(i, _pedC.setHex(0x888888)); }
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     return m;
-  }
+  });
   const group = new THREE.Group(); group.name = 'pedestrianLod';
-  const meshes = [
-    part(0.19, 0.47, 0.115, 0.0),   // jambes
-    part(0.26, 0.34, 0.14, 0.47),   // torse
-    part(0.125, 0.14, 0.125, 0.83), // tête
-  ];
   meshes.forEach(m=> group.add(m));
   worldRoot.add(group);
   const free = []; for(let i=PED_LOD_CAPACITY-1;i>=0;i--) free.push(i);
@@ -7386,10 +7422,11 @@ function pedestrianLodSet(slot, position, quaternion, colors){
   _pedM.compose(position, quaternion, _pedS);
   pedLod.meshes.forEach(m=> m.setMatrixAt(slot, _pedM));
   if(!pedLod.shown[slot] && colors){
-    pedLod.meshes[0].setColorAt(slot, _pedC.setHex(colors.pant));
-    pedLod.meshes[1].setColorAt(slot, _pedC.setHex(colors.tshirt));
-    pedLod.meshes[2].setColorAt(slot, _pedC.setHex(colors.skin));
-    pedLod.meshes.forEach(m=>{ m.instanceColor.needsUpdate = true; });
+    const byRole = [colors.pant, colors.tshirt, colors.skin, colors.skin];
+    pedLod.meshes.forEach(m=>{
+      m.setColorAt(slot, _pedC.setHex(byRole[m.userData.role]));
+      m.instanceColor.needsUpdate = true;
+    });
   }
   pedLod.shown[slot] = 1;
 }
@@ -7455,7 +7492,8 @@ function tickAgents(dt){
           const lod = ensurePedestrianLod();
           a.lodSlot = (lod && lod.free.length) ? lod.free.pop() : null; // null : pas de LOD (rig complet en permanence)
         }
-        const near = a.lodSlot === null || m.position.distanceToSquared(camera.position) < PED_FULL_RIG_DIST_SQ;
+        const d2 = m.position.distanceToSquared(camera.position);
+        const near = a.lodSlot === null || d2 < (m.visible ? PED_FULL_RIG_FAR_SQ : PED_FULL_RIG_DIST_SQ);
         if(near){
           if(!m.visible) m.visible = true;
           if(a.lodSlot !== null && pedLod.shown[a.lodSlot]){ pedestrianLodHide(a.lodSlot); lodTouched = true; }
