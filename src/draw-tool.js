@@ -14,7 +14,7 @@
 import * as THREE from "three";
 import {
   controls, renderer, worldRoot, buildZone, buildings, editingBuildingId,
-  treePlacing, grassPainting, labelPlacing,
+  treePlacing, amenagementPlacing, grassPainting, labelPlacing,
 } from './state.js';
 import * as AppState from './state.js';
 import {
@@ -26,6 +26,7 @@ import { footprintForBand, buildingTotalHeight } from './building-utils.js';
 import { NEON_BLUE, NEON_BLUE_CSS, DEFAULT_USAGE } from './config.js';
 import * as ExtGare from './extension-gare.js';
 import * as Trees from './trees.js';
+import * as Amenagements from './amenagements.js';
 import * as Grass from './grass.js';
 import * as Labels from './labels.js';
 
@@ -139,6 +140,7 @@ export function closeDrawMenu(){
 
 function startDraw(mode){
   if(treePlacing) Trees.stopTreeTool();
+  if(amenagementPlacing) Amenagements.stopAmenagementsTool();
   if(grassPainting) Grass.stopGrassTool();
   if(labelPlacing) Labels.stopLabelTool();
   ExtGare.cancelExtensionGareIfActive();
@@ -383,6 +385,7 @@ function askFloorsThenBuild(finalPoints){
    ------------------------------------------------------------ */
 export function startVolumeDraw(b){
   if(treePlacing) Trees.stopTreeTool();
+  if(amenagementPlacing) Amenagements.stopAmenagementsTool();
   if(grassPainting) Grass.stopGrassTool();
   if(labelPlacing) Labels.stopLabelTool();
   ExtGare.cancelExtensionGareIfActive();
@@ -546,6 +549,7 @@ btnDraw.addEventListener('click', ()=>{
   if(drawing){ cancelDraw(); return; }
   if(!drawMenuOpen){
     if(treePlacing) Trees.stopTreeTool();
+    if(amenagementPlacing) Amenagements.stopAmenagementsTool();
     if(grassPainting) Grass.stopGrassTool();
     if(labelPlacing) Labels.stopLabelTool();
     ExtGare.cancelExtensionGareIfActive();

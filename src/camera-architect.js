@@ -12,7 +12,7 @@ import {
   scene, camera, controls, renderer, orthoCamera, worldRoot, siteRoot,
   globalRoot, buildZone, buildings, hallMesh, treesGroup, quartierGroup,
   sun, hemiLight, labels, drawing, drawMenuOpen, treePlacing, grassPainting,
-  labelPlacing, editingBuildingId, planViewActive,
+  labelPlacing, editingBuildingId, planViewActive, amenagementPlacing,
 } from './state.js';
 import { polygonAreaXZ } from './geometry-utils.js';
 import { USAGE_COLORS, USAGE_LABELS } from './config.js';
@@ -24,7 +24,8 @@ let exitPedestrianMode, getPedestrianModeActive, getGlobalViewActive,
     exitGlobalView, cancelDraw, closeDrawMenu, stopTreeTool, stopGrassTool,
     stopLabelTool, stopEditBuildingShape, getMovingBuildingId, stopMoveBuilding,
     closeBldgEditWindow, togglePlanView, applyAgentTypeVisibility,
-    getVehiclesVisible, setVehiclesVisible, getPedestriansVisible, setPedestriansVisible;
+    getVehiclesVisible, setVehiclesVisible, getPedestriansVisible, setPedestriansVisible,
+    stopAmenagementsTool, refreshNightLighting;
 export function initCameraArchitect(deps){
   ({
     exitPedestrianMode, getPedestrianModeActive, getGlobalViewActive,
@@ -32,6 +33,7 @@ export function initCameraArchitect(deps){
     stopLabelTool, stopEditBuildingShape, getMovingBuildingId, stopMoveBuilding,
     closeBldgEditWindow, togglePlanView, applyAgentTypeVisibility,
     getVehiclesVisible, setVehiclesVisible, getPedestriansVisible, setPedestriansVisible,
+    stopAmenagementsTool, refreshNightLighting,
   } = deps);
 }
 
@@ -77,6 +79,13 @@ let architectViewMode = 'elevation'; // 'elevation' | 'axo' — ne concerne QUE 
                                       // La vue de haut n'est plus un état exclusif : elle est désormais TOUJOURS
                                       // rendue en vis-à-vis de ce mode (voir composeArchitectSheet / drawArchitectGarePanel).
 let architectLabelsOn = true;     // labels visibles sur l'image principale uniquement
+// Loupe/main de l'image principale (voir les boutons au survol, plus bas) :
+// `zoom` ≥ 1, `cx`/`cy` = décalage du centre de vue en fraction de la demi-
+// largeur/demi-hauteur du cadrage non zoomé (0,0 = centré).
+const architectViewAdjust = { zoom:1, cx:0, cy:0 };
+// Géométrie (en pixels écran) de la dernière composition affichée : sert au
+// placement des boutons au survol et au redessin partiel de l'image principale.
+let architectLayout = null;
 const btnArchitectMode = document.getElementById('btn-architect-mode');
 const architectCloseBar = document.getElementById('architect-close-bar');
 const btnArchitectClose = document.getElementById('btn-architect-close');
@@ -96,12 +105,14 @@ function enterArchitectMode(){
   if(drawing) cancelDraw();
   if(drawMenuOpen) closeDrawMenu();
   if(treePlacing) stopTreeTool();
+  if(amenagementPlacing) stopAmenagementsTool();
   if(grassPainting) stopGrassTool();
   if(labelPlacing) stopLabelTool();
   if(editingBuildingId) stopEditBuildingShape();
   if(getMovingBuildingId()) stopMoveBuilding();
   ExtGare.cancelExtensionGareIfActive();
   closeBldgEditWindow();
+  resetArchitectViewAdjust();
   // Sauvegarde COMPLÈTE de la caméra perspective + OrbitControls, AVANT
   // toute manipulation — un retour exact à la sortie (voir exitArchitectMode)
   // suppose de capturer tout ce qui peut varier, pas seulement position et
@@ -174,6 +185,13 @@ function exitArchitectMode(){
   renderer.setViewport(0, 0, renderer.domElement.clientWidth, renderer.domElement.clientHeight);
   orthoCamera.up.set(0,1,0);
   controls.enabled = true;
+  architectLayout = null;
+  resetArchitectViewAdjust();
+  architectZoomTools.classList.remove('show');
+  // Sécurité éclairage : la planche a modifié temporairement lumières, ombres,
+  // exposition et matériaux du site — on resynchronise explicitement tout
+  // l'éclairage (jour/nuit, fenêtres allumées, lampadaires) sur l'état courant.
+  refreshNightLighting();
 }
 btnArchitectMode.addEventListener('click', ()=> architectModeActive ? exitArchitectMode() : enterArchitectMode());
 btnArchitectClose.addEventListener('click', exitArchitectMode);
@@ -195,6 +213,9 @@ function setArchitectActiveButtons(){
 architectModeBar.querySelectorAll('[data-architect-dir]').forEach(btn=>{
   btn.addEventListener('click', ()=>{
     const d = btn.dataset.architectDir;
+    // Le zoom/déplacement de l'image principale est propre à une orientation :
+    // on repart d'un cadrage complet à chaque changement de vue.
+    resetArchitectViewAdjust();
     if(d==='axo') architectViewMode = (architectViewMode==='axo') ? 'elevation' : 'axo';
     // Nord/Sud/Est/Ouest ne fait plus que tourner l'axe — le mode en cours
     // (élévation ou axonométrie) reste actif, plus besoin de recliquer dessus.
@@ -211,6 +232,108 @@ architectBtnLabels.addEventListener('click', ()=>{
   renderArchitectComposition();
 });
 architectBtnExport.addEventListener('click', ()=> exportArchitectComposition());
+
+/* ---- Loupe + / loupe − / main : au survol de l'image principale
+   ("ENSEMBLE — POLYGONE D'IMPLANTATION"), trois boutons permettent
+   d'agrandir la vue À L'INTÉRIEUR de l'image (le cadre, lui, ne bouge pas) et
+   de la recentrer en la faisant glisser. Seule cette image est redessinée
+   (voir redrawArchitectMainLeft), pas toute la planche. ---- */
+const architectZoomTools = document.getElementById('architect-zoom-tools');
+const architectZoomInBtn = document.getElementById('architect-zoom-in');
+const architectZoomOutBtn = document.getElementById('architect-zoom-out');
+const architectPanBtn = document.getElementById('architect-pan');
+const ARCHITECT_ZOOM_STEP = 1.5;
+const ARCHITECT_ZOOM_MAX = 8;
+let architectPanToolOn = false;
+let architectPanDrag = null; // { startX, startY, cx, cy }
+let architectMainRedrawQueued = false;
+function refreshArchitectZoomButtons(){
+  architectZoomInBtn.disabled = architectViewAdjust.zoom >= ARCHITECT_ZOOM_MAX - 0.001;
+  architectZoomOutBtn.disabled = architectViewAdjust.zoom <= 1.001;
+  architectPanBtn.classList.toggle('active', architectPanToolOn);
+}
+function resetArchitectViewAdjust(){
+  architectViewAdjust.zoom = 1; architectViewAdjust.cx = 0; architectViewAdjust.cy = 0;
+  architectPanToolOn = false; architectPanDrag = null;
+  architectCanvas.style.cursor = '';
+  refreshArchitectZoomButtons();
+}
+// Le centre de vue ne peut pas sortir du cadrage complet : à zoom z, la
+// fenêtre visible fait 1/z du cadre, donc le centre peut s'écarter d'au plus
+// (1 − 1/z) de la demi-taille de ce cadre.
+function clampArchitectPan(){
+  const lim = Math.max(0, 1 - 1/architectViewAdjust.zoom);
+  architectViewAdjust.cx = Math.max(-lim, Math.min(lim, architectViewAdjust.cx));
+  architectViewAdjust.cy = Math.max(-lim, Math.min(lim, architectViewAdjust.cy));
+}
+function queueArchitectMainRedraw(){
+  if(architectMainRedrawQueued) return;
+  architectMainRedrawQueued = true;
+  requestAnimationFrame(()=>{ architectMainRedrawQueued = false; redrawArchitectMainLeft(); });
+}
+function setArchitectZoom(z){
+  architectViewAdjust.zoom = Math.max(1, Math.min(ARCHITECT_ZOOM_MAX, z));
+  clampArchitectPan();
+  refreshArchitectZoomButtons();
+  queueArchitectMainRedraw();
+}
+architectZoomInBtn.addEventListener('click', ()=> setArchitectZoom(architectViewAdjust.zoom * ARCHITECT_ZOOM_STEP));
+architectZoomOutBtn.addEventListener('click', ()=> setArchitectZoom(architectViewAdjust.zoom / ARCHITECT_ZOOM_STEP));
+architectPanBtn.addEventListener('click', ()=>{
+  architectPanToolOn = !architectPanToolOn;
+  architectPanDrag = null;
+  architectCanvas.style.cursor = '';
+  refreshArchitectZoomButtons();
+});
+function architectPointInMainLeft(clientX, clientY){
+  if(!architectLayout) return false;
+  const r = architectLayout.mainRectLeft;
+  return clientX >= r.x && clientX <= r.x + r.w && clientY >= r.y && clientY <= r.y + r.h;
+}
+// Boutons visibles uniquement au survol de l'image principale, calés dans son
+// coin bas-droit (le coin haut-gauche porte déjà son titre, et le haut est
+// en partie recouvert par la barre d'orientation).
+function updateArchitectZoomToolsVisibility(clientX, clientY){
+  const show = architectModeActive && (!!architectPanDrag || architectPointInMainLeft(clientX, clientY));
+  if(show && architectLayout){
+    const r = architectLayout.mainRectLeft;
+    architectZoomTools.style.right = Math.round(window.innerWidth - (r.x + r.w) + 10) + 'px';
+    architectZoomTools.style.bottom = Math.round(window.innerHeight - (r.y + r.h) + 10) + 'px';
+  }
+  architectZoomTools.classList.toggle('show', show);
+}
+window.addEventListener('mousemove', (ev)=> updateArchitectZoomToolsVisibility(ev.clientX, ev.clientY));
+architectCanvas.addEventListener('pointerdown', (ev)=>{
+  if(!architectModeActive || !architectPanToolOn || ev.button !== 0) return;
+  if(!architectPointInMainLeft(ev.clientX, ev.clientY)) return;
+  architectPanDrag = { startX: ev.clientX, startY: ev.clientY, cx: architectViewAdjust.cx, cy: architectViewAdjust.cy };
+  architectCanvas.setPointerCapture(ev.pointerId);
+  architectCanvas.style.cursor = 'grabbing';
+  ev.preventDefault();
+});
+architectCanvas.addEventListener('pointermove', (ev)=>{
+  if(!architectModeActive) return;
+  if(architectPanDrag){
+    const r = architectLayout.mainRectLeft;
+    const z = architectViewAdjust.zoom;
+    // Le contenu suit la souris : le centre de vue part à l'opposé.
+    architectViewAdjust.cx = architectPanDrag.cx - (ev.clientX - architectPanDrag.startX) * (2/z) / r.w;
+    architectViewAdjust.cy = architectPanDrag.cy + (ev.clientY - architectPanDrag.startY) * (2/z) / r.h;
+    clampArchitectPan();
+    queueArchitectMainRedraw();
+    return;
+  }
+  architectCanvas.style.cursor = (architectPanToolOn && architectPointInMainLeft(ev.clientX, ev.clientY)) ? 'grab' : '';
+});
+function endArchitectPanDrag(ev){
+  if(!architectPanDrag) return;
+  architectPanDrag = null;
+  if(ev && architectCanvas.hasPointerCapture && architectCanvas.hasPointerCapture(ev.pointerId)) architectCanvas.releasePointerCapture(ev.pointerId);
+  architectCanvas.style.cursor = (ev && architectPanToolOn && architectPointInMainLeft(ev.clientX, ev.clientY)) ? 'grab' : '';
+}
+architectCanvas.addEventListener('pointerup', endArchitectPanDrag);
+architectCanvas.addEventListener('pointercancel', endArchitectPanDrag);
+refreshArchitectZoomButtons();
 
 let architectRecomposeTimer = null;
 function scheduleArchitectRecompose(){
@@ -496,7 +619,7 @@ const ARCHITECT_BG = 0xf2f0ea;
    projection ultérieure (numéros, labels, cotes, grille), pour ne jamais
    dépendre d'une caméra partagée qui sera re-cadrée par le panneau suivant
    (fiche "Extension Gare", etc.). ---- */
-function frameArchitectCamera(box, dir, viewMode, aspect, marginFactor){
+function frameArchitectCamera(box, dir, viewMode, aspect, marginFactor, viewAdjust){
   const margin = marginFactor || 1.0;
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
@@ -504,7 +627,13 @@ function frameArchitectCamera(box, dir, viewMode, aspect, marginFactor){
   if(viewMode === 'haut'){
     const standoff = size.y + 100;
     orthoCamera.position.set(center.x, box.max.y + standoff, center.z);
-    const upDir = ARCHITECT_VIEW_DIRS[dir].clone().multiplyScalar(-1);
+    // Vue de haut cohérente avec l'élévation choisie : on regarde depuis la
+    // même face (Nord = caméra au Nord, qui regarde vers le Sud), donc cette
+    // face se retrouve EN BAS de l'image, exactement comme l'observateur de
+    // l'élévation — et la gauche/droite de l'élévation reste la gauche/droite
+    // du plan. (Avant : `-viewDir`, qui retournait le plan de 180° — Nord/Sud
+    // et Est/Ouest inversés par rapport à l'élévation affichée à côté.)
+    const upDir = ARCHITECT_VIEW_DIRS[dir];
     orthoCamera.up.set(upDir.x, 0, upDir.z);
     orthoCamera.lookAt(center);
     let halfW = Math.max(size.x, size.z, 10) * margin / 2;
@@ -546,6 +675,25 @@ function frameArchitectCamera(box, dir, viewMode, aspect, marginFactor){
     if(halfW/halfH < aspect) halfW = halfH*aspect; else halfH = halfW/aspect;
     orthoCamera.left = -halfW; orthoCamera.right = halfW; orthoCamera.top = halfH; orthoCamera.bottom = -halfH;
     orthoCamera.near = standoff*0.5; orthoCamera.far = depthExtent + standoff*1.5;
+  }
+  // Loupe / main (image principale uniquement) : zoom = rétrécissement de la
+  // fenêtre de vue, pan = translation de la caméra ET de sa cible dans le
+  // plan de l'image (jamais en profondeur, donc near/far restent valides et
+  // l'orientation ne change pas). `cx`/`cy` sont exprimés en fraction de la
+  // demi-largeur/demi-hauteur du cadrage non zoomé. Le `framing` retourné
+  // décrit la vue zoomée/déplacée : numéros, labels, grille et cotes suivent.
+  if(viewAdjust && viewAdjust.zoom > 1.0001){
+    const z = viewAdjust.zoom;
+    const halfW0 = (orthoCamera.right - orthoCamera.left) / 2;
+    const halfH0 = (orthoCamera.top - orthoCamera.bottom) / 2;
+    orthoCamera.updateMatrixWorld(true);
+    const camRight = new THREE.Vector3().setFromMatrixColumn(orthoCamera.matrixWorld, 0);
+    const camUp = new THREE.Vector3().setFromMatrixColumn(orthoCamera.matrixWorld, 1);
+    const shift = camRight.multiplyScalar((viewAdjust.cx||0) * halfW0).addScaledVector(camUp, (viewAdjust.cy||0) * halfH0);
+    orthoCamera.position.add(shift);
+    center.add(shift);
+    orthoCamera.left = -halfW0 / z; orthoCamera.right = halfW0 / z;
+    orthoCamera.top = halfH0 / z; orthoCamera.bottom = -halfH0 / z;
   }
   orthoCamera.updateProjectionMatrix();
   const framing = {
@@ -591,7 +739,7 @@ function architectNorthArrowAngle(framing){
   const sx = north.dot(right), sy = -north.dot(camUp);
   return Math.atan2(sx, -sy);
 }
-function renderArchitectPanelCanvas(box, dir, viewMode, pxW, pxH, marginFactor){
+function renderArchitectPanelCanvas(box, dir, viewMode, pxW, pxH, marginFactor, viewAdjust){
   const w = Math.max(48, Math.round(pxW)), h = Math.max(48, Math.round(pxH));
   const rt = ensureArchitectRT(w, h);
 
@@ -609,7 +757,7 @@ function renderArchitectPanelCanvas(box, dir, viewMode, pxW, pxH, marginFactor){
 
   scene.background = null;
   renderer.setClearColor(ARCHITECT_BG, 1);
-  const { center, framing } = frameArchitectCamera(box, dir, viewMode, w/h, marginFactor);
+  const { center, framing } = frameArchitectCamera(box, dir, viewMode, w/h, marginFactor, viewAdjust);
 
   renderer.setRenderTarget(rt);
   // IMPORTANT : `setViewport`/`setScissor` attendent des dimensions en
@@ -957,30 +1105,29 @@ const ARCHITECT_PAPER = '#f2f0ea';
 // fois côte à côte — la vue de haut n'est plus un état exclusif basculé
 // par un bouton, elle est désormais toujours affichée en vis-à-vis de
 // l'élévation/axonométrie choisie, puisque la place ne manque pas à l'écran.
-function drawArchitectMainView(ctx, rect, mainBox, dir, mode, scale, sortedNew, indexOf, vehiclesWereVisible, tagTxt){
+function drawArchitectMainView(ctx, rect, mainBox, dir, mode, scale, sortedNew, indexOf, vehiclesWereVisible, tagTxt, viewAdjust){
   setVehiclesVisible((mode==='haut') ? false : vehiclesWereVisible); applyAgentTypeVisibility();
   const globalRootWasVisible = globalRoot.visible;
   globalRoot.visible = false; // seule la maquette du site réel (place_de_milan.glb) est montrée
-  const res = renderArchitectPanelCanvas(mainBox, dir, mode, rect.w, rect.h, 0.92);
-  globalRoot.visible = globalRootWasVisible;
-  setVehiclesVisible(vehiclesWereVisible); applyAgentTypeVisibility();
+  let res;
+  try{
+    res = renderArchitectPanelCanvas(mainBox, dir, mode, rect.w, rect.h, 0.92, viewAdjust);
+  } finally {
+    globalRoot.visible = globalRootWasVisible;
+    setVehiclesVisible(vehiclesWereVisible); applyAgentTypeVisibility();
+  }
   const framing = res.framing;
 
   architectPanelShadow(ctx, rect, scale);
+  // Tout ce qui est projeté dans l'image (grille, cotes, numéros, labels) est
+  // écrêté au cadre : avec le zoom, ces annotations débordent facilement et
+  // ne doivent jamais recouvrir les panneaux voisins.
+  ctx.save();
+  ctx.beginPath(); ctx.rect(rect.x, rect.y, rect.w, rect.h); ctx.clip();
   ctx.drawImage(res.cnv, rect.x, rect.y, rect.w, rect.h);
   if(mode==='elevation') architectDrawGroundMask(ctx, rect, rect.h, res.groundY);
   architectDrawGroundGrid(ctx, rect, framing, mainBox);
   architectDrawPolygonDimensions(ctx, rect, framing, mainBox, scale);
-  ctx.strokeStyle = '#20262b'; ctx.lineWidth = 1.5*scale;
-  ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
-  if(tagTxt){
-    ctx.fillStyle = 'rgba(20,26,30,.8)';
-    ctx.font = `700 ${11*scale}px 'Space Grotesk', sans-serif`;
-    const tagW = ctx.measureText(tagTxt).width + 16*scale;
-    ctx.fillRect(rect.x+8*scale, rect.y+8*scale, tagW, 22*scale);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(tagTxt, rect.x+16*scale, rect.y+23*scale);
-  }
 
   // Numéros au-dessus de chaque nouveau bâtiment + labels de la maquette,
   // projetés via `framing` (jamais `orthoCamera` directement — il a pu être
@@ -1053,26 +1200,100 @@ function drawArchitectMainView(ctx, rect, mainBox, dir, mode, scale, sortedNew, 
       ctx.beginPath(); ctx.arc(sx, sy, 2.6*scale, 0, Math.PI*2); ctx.fill();
     });
   }
+  ctx.restore(); // fin de l'écrêtage au cadre de l'image
+
+  ctx.strokeStyle = '#20262b'; ctx.lineWidth = 1.5*scale;
+  ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+  if(tagTxt){
+    const zoomTxt = (viewAdjust && viewAdjust.zoom > 1.0001) ? `  ·  ×${viewAdjust.zoom.toFixed(1)}` : '';
+    const fullTag = tagTxt + zoomTxt;
+    ctx.fillStyle = 'rgba(20,26,30,.8)';
+    ctx.font = `700 ${11*scale}px 'Space Grotesk', sans-serif`;
+    const tagW = ctx.measureText(fullTag).width + 16*scale;
+    ctx.fillRect(rect.x+8*scale, rect.y+8*scale, tagW, 22*scale);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(fullTag, rect.x+16*scale, rect.y+23*scale);
+  }
+  // Vue de haut : flèche Nord dans l'image même (le plan est orienté comme
+  // l'élévation choisie, donc le Nord n'est pas forcément en haut).
+  if(mode==='haut') architectDrawNorthArrow(ctx, rect.x+rect.w-26*scale, rect.y+rect.h-30*scale, scale, framing);
   return framing;
+}
+// Petite rose du Nord (fond clair, pour les images rendues sur papier).
+function architectDrawNorthArrow(ctx, cx, cy, scale, framing){
+  const ang = architectNorthArrowAngle(framing);
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = 'rgba(255,255,255,.85)';
+  ctx.beginPath(); ctx.arc(0, 0, 15*scale, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#20262b'; ctx.lineWidth = 1*scale;
+  ctx.beginPath(); ctx.arc(0, 0, 15*scale, 0, Math.PI*2); ctx.stroke();
+  ctx.rotate(ang);
+  ctx.fillStyle = '#141a1e';
+  ctx.beginPath(); ctx.moveTo(0,-12*scale); ctx.lineTo(4*scale,5*scale); ctx.lineTo(0,2*scale); ctx.lineTo(-4*scale,5*scale); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  // Le "N" suit la pointe de la flèche, à l'extérieur du cercle.
+  const nx = cx + Math.sin(ang)*22*scale, ny = cy - Math.cos(ang)*22*scale;
+  ctx.fillStyle = '#141a1e'; ctx.font = `700 ${10*scale}px 'Space Grotesk', sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('N', nx, ny);
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+}
+/* ---- Mise en état "planche" de la scène partagée, et restauration.
+   Regroupé dans deux fonctions pour être réutilisé à l'identique par la
+   composition complète (composeArchitectSheet) ET par le redessin partiel de
+   l'image principale pendant le zoom/déplacement (redrawArchitectMainLeft) —
+   sans jamais dupliquer la logique de sauvegarde/restauration.
+   `rs` est rempli au fil de l'eau : si une étape lève une exception,
+   endArchitectRender() ne restaure que ce qui a réellement été modifié. ---- */
+function beginArchitectRender(rs){
+  // Sauvegarde COMPLÈTE et symétrique de l'état de rendu du renderer WebGL
+  // partagé, AVANT tout rendu de panneau — jamais de reconstruction à la
+  // main à partir de `renderer.domElement.width/height` (unité physique,
+  // pas logique : c'était la cause du viewport 4× trop grand après sortie
+  // du Mode Architecte sur un écran Retina/HiDPI). On restaure exactement
+  // cet état (quel qu'il soit) à la toute fin.
+  rs.prevRenderTarget = renderer.getRenderTarget();
+  rs.prevViewport = new THREE.Vector4(); renderer.getViewport(rs.prevViewport);
+  rs.prevScissor = new THREE.Vector4(); renderer.getScissor(rs.prevScissor);
+  rs.prevScissorTest = renderer.getScissorTest();
+  rs.pedestriansWereVisible = getPedestriansVisible();
+  setPedestriansVisible(false); applyAgentTypeVisibility();
+  rs.vehiclesWereVisible = getVehiclesVisible();
+  rs.mainBox = architectMainBox();
+  rs.lightState = architectSetupLighting(rs.mainBox);
+  rs.treeState = architectSetTreesTransparent();
+  rs.grayscaleStash = architectApplyGrayscale();
+  rs.usageColorState = architectApplyUsageColors();
+  rs.prevFog = scene.fog;
+  scene.fog = null; // ne pas perdre les arrière-plans dans le gris du fond (Réf. A)
+  rs.fogCleared = true;
+}
+function endArchitectRender(rs){
+  if(rs.fogCleared) scene.fog = rs.prevFog;
+  if(rs.usageColorState) architectRestoreUsageColors(rs.usageColorState);
+  if(rs.grayscaleStash) architectRestoreGrayscale(rs.grayscaleStash);
+  if(rs.pedestriansWereVisible !== undefined){ setPedestriansVisible(rs.pedestriansWereVisible); applyAgentTypeVisibility(); }
+  if(rs.lightState) architectRestoreLighting(rs.lightState);
+  if(rs.treeState) architectRestoreTrees(rs.treeState);
+  // Restauration SYMÉTRIQUE de l'état de rendu sauvegardé au début — jamais
+  // de reconstruction à la main à partir de `renderer.domElement.width/height`
+  // (unité physique, pas logique : c'était le vrai bug à l'origine du viewport
+  // 4× trop grand sur écran Retina/HiDPI). On revient exactement à l'état
+  // d'avant, quel qu'il ait été (y compris si un scissor test était actif, ou
+  // un autre render target que le canvas principal).
+  if(rs.prevViewport){
+    renderer.setRenderTarget(rs.prevRenderTarget);
+    renderer.setViewport(rs.prevViewport);
+    renderer.setScissor(rs.prevScissor);
+    renderer.setScissorTest(rs.prevScissorTest);
+  }
 }
 function composeArchitectSheet(ctx, W, H, scale){
   scale = scale || 1;
   ctx.clearRect(0,0,W,H);
   ctx.fillStyle = ARCHITECT_PAPER;
   ctx.fillRect(0,0,W,H);
-
-  // Sauvegarde COMPLÈTE et symétrique de l'état de rendu du renderer WebGL
-  // partagé, AVANT tout rendu de panneau — jamais de reconstruction à la
-  // main à partir de `renderer.domElement.width/height` (unité physique,
-  // pas logique : c'était la cause du viewport 4× trop grand après sortie
-  // du Mode Architecte sur un écran Retina/HiDPI). On restaure exactement
-  // cet état (quel qu'il soit) à la toute fin, dans le `finally`.
-  const prevRenderTarget = renderer.getRenderTarget();
-  const prevViewport = new THREE.Vector4();
-  renderer.getViewport(prevViewport);
-  const prevScissor = new THREE.Vector4();
-  renderer.getScissor(prevScissor);
-  const prevScissorTest = renderer.getScissorTest();
 
   const sortedNew = architectSortedNewBuildings();
   // ATTENTION : `extensionGareMesh` ("Extension_Gare" du GLB) n'est qu'un
@@ -1084,16 +1305,7 @@ function composeArchitectSheet(ctx, W, H, scale){
   // `extensionGareMesh`, qui doit rester caché comme en dehors du mode Architecte.
   const hasGare = ExtGare.extHallSlices.length > 0;
 
-  const pedestriansWereVisible = getPedestriansVisible();
-  setPedestriansVisible(false); applyAgentTypeVisibility();
-  const vehiclesWereVisible = getVehiclesVisible();
-  const mainBox = architectMainBox();
-  const lightState = architectSetupLighting(mainBox);
-  const treeState = architectSetTreesTransparent();
-  const grayscaleStash = architectApplyGrayscale();
-  const usageColorState = architectApplyUsageColors();
-  const prevFog = scene.fog;
-  scene.fog = null; // ne pas perdre les arrière-plans dans le gris du fond (Réf. A)
+  const rs = {};
 
   // ATTENTION (bug corrigé) : tout ce qui suit mute des états PARTAGÉS de la
   // scène (couleurs désaturées, visibilité piétons/véhicules/arbres,
@@ -1106,6 +1318,8 @@ function composeArchitectSheet(ctx, W, H, scale){
   // du modèle qui semble "mal placé") rapportés après coup. La restauration
   // doit donc TOUJOURS s'exécuter, qu'il y ait eu une erreur ou non.
   try{
+  beginArchitectRender(rs);
+  const { vehiclesWereVisible, mainBox } = rs;
   // ---- Bandeau de titre plein largeur ----
   const HEADER_H = Math.round(52*scale);
   ctx.fillStyle = '#141a1e';
@@ -1155,7 +1369,10 @@ function composeArchitectSheet(ctx, W, H, scale){
   const mainLeftW = Math.max(40*scale, Math.min(mainRect.w-40*scale, Math.round(mainRect.w*0.58)));
   const mainRectLeft = { x:mainRect.x, y:mainRect.y, w:mainLeftW, h:mainRect.h };
   const mainRectRight = { x:mainRect.x+mainLeftW+mainGap, y:mainRect.y, w:Math.max(40*scale, mainRect.w-mainLeftW-mainGap), h:mainRect.h };
-  const mainFramingLeft = drawArchitectMainView(ctx, mainRectLeft, mainBox, architectDir, architectViewMode, scale, sortedNew, indexOf, vehiclesWereVisible, 'ENSEMBLE — POLYGONE D\'IMPLANTATION');
+  // Seule la composition à l'échelle écran (scale 1) alimente `architectLayout` :
+  // l'export PNG (échelle > 1) n'a pas à écraser la géométrie de l'écran.
+  if(scale === 1) architectLayout = { mainRectLeft: { ...mainRectLeft }, sortedNew, indexOf };
+  const mainFramingLeft = drawArchitectMainView(ctx, mainRectLeft, mainBox, architectDir, architectViewMode, scale, sortedNew, indexOf, vehiclesWereVisible, ARCHITECT_MAIN_TAG, architectViewAdjust);
   drawArchitectMainView(ctx, mainRectRight, mainBox, architectDir, 'haut', scale, sortedNew, indexOf, vehiclesWereVisible, 'VUE DE HAUT');
   const mainFraming = mainFramingLeft; // référence pour l'échelle/la flèche Nord du cartouche
 
@@ -1185,23 +1402,28 @@ function composeArchitectSheet(ctx, W, H, scale){
   drawArchitectTitleBlock(ctx, titleRect, scale, { count:sortedNew.length }, mainFraming);
   } finally {
     // ---- Restauration (garantie, même en cas d'erreur ci-dessus) ----
-    scene.fog = prevFog;
-    architectRestoreUsageColors(usageColorState);
-    architectRestoreGrayscale(grayscaleStash);
-    setPedestriansVisible(pedestriansWereVisible); applyAgentTypeVisibility();
-    architectRestoreLighting(lightState);
-    architectRestoreTrees(treeState);
-    // Restauration SYMÉTRIQUE de l'état de rendu sauvegardé en tout début de
-    // fonction — jamais de reconstruction à la main à partir de
-    // `renderer.domElement.width/height` (unité physique, pas logique :
-    // c'était le vrai bug à l'origine du viewport 4× trop grand sur écran
-    // Retina/HiDPI). On revient exactement à l'état d'avant, quel qu'il ait
-    // été (y compris si un scissor test était actif, ou un autre render
-    // target que le canvas principal).
-    renderer.setRenderTarget(prevRenderTarget);
-    renderer.setViewport(prevViewport);
-    renderer.setScissor(prevScissor);
-    renderer.setScissorTest(prevScissorTest);
+    endArchitectRender(rs);
+  }
+}
+const ARCHITECT_MAIN_TAG = 'ENSEMBLE — POLYGONE D\'IMPLANTATION';
+// Redessin PARTIEL : uniquement l'image principale de gauche (zoom/déplacement
+// à la loupe/main) — sans recomposer fiches, cartouche ni vue de haut. Réutilise
+// exactement la même mise en état de la scène que la composition complète.
+function redrawArchitectMainLeft(){
+  if(!architectModeActive || !architectLayout) return;
+  const rect = architectLayout.mainRectLeft;
+  const rs = {};
+  try{
+    beginArchitectRender(rs);
+    architectCtx.save();
+    architectCtx.beginPath(); architectCtx.rect(rect.x-1, rect.y-1, rect.w+2, rect.h+2); architectCtx.clip();
+    architectCtx.fillStyle = ARCHITECT_PAPER;
+    architectCtx.fillRect(rect.x-1, rect.y-1, rect.w+2, rect.h+2);
+    drawArchitectMainView(architectCtx, rect, rs.mainBox, architectDir, architectViewMode, 1,
+      architectLayout.sortedNew, architectLayout.indexOf, rs.vehiclesWereVisible, ARCHITECT_MAIN_TAG, architectViewAdjust);
+    architectCtx.restore();
+  } finally {
+    endArchitectRender(rs);
   }
 }
 
@@ -1375,20 +1597,22 @@ function drawArchitectGarePanel(ctx, rect, scale){
   const globalRootWasVisible = globalRoot.visible;
   globalRoot.visible = false;
 
-  const savedMats = [];
+  // ATTENTION (bug corrigé) : les tranches réutilisent DIRECTEMENT les
+  // matériaux du site (voir extDeformModuleToQuad : glass, BATIMENTS_fenetre…
+  // partagés par référence, indispensables à leur shader de fenêtres de
+  // nuit). Passer `wireframe=true` sur ces matériaux rendait donc filaire
+  // TOUT objet de la maquette qui les utilise aussi (hall, façades
+  // existantes), pas seulement l'extension dessinée. On ne touche plus
+  // jamais à un matériau : on remplace TEMPORAIREMENT le matériau des seuls
+  // maillages de l'extension par un matériau filaire dédié, puis on remet
+  // exactement les matériaux d'origine.
+  const wireMat = new THREE.MeshBasicMaterial({ color:0x2ee8ff, wireframe:true, fog:false, side:THREE.DoubleSide });
+  const swappedMeshes = []; // [mesh, matériau d'origine]
   ExtGare.extHallSlices.forEach(s=> s.group.traverse(o=>{
     if(!o.isMesh) return; // exclut les LineSegments/Line (contour, halo) : jamais touchés
-    (Array.isArray(o.material)?o.material:[o.material]).forEach(m=>{
-      if(m && !savedMats.find(x=>x[0]===m)){
-        savedMats.push([m, m.wireframe, m.color ? m.color.getHex() : null, m.emissive ? m.emissive.getHex() : null]);
-      }
-    });
+    swappedMeshes.push([o, o.material]);
+    o.material = wireMat;
   }));
-  savedMats.forEach(([m])=>{
-    m.wireframe = true;
-    if(m.color) m.color.setHex(0x2ee8ff);
-    if(m.emissive) m.emissive.setHex(0x0d3a42);
-  });
 
   const gap = Math.round(rect.w*0.015);
   const leftW = Math.max(30*scale, Math.min(rect.w-gap-30*scale, Math.round((rect.w-gap)*0.56)));
@@ -1419,11 +1643,8 @@ function drawArchitectGarePanel(ctx, rect, scale){
       }
     });
   } finally {
-    savedMats.forEach(([m,w,c,e])=>{
-      m.wireframe = w;
-      if(c!==null) m.color.setHex(c);
-      if(e!==null) m.emissive.setHex(e);
-    });
+    swappedMeshes.forEach(([o, m])=>{ o.material = m; });
+    wireMat.dispose();
     globalRoot.visible = globalRootWasVisible;
   }
 

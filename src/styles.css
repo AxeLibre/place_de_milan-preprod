@@ -96,6 +96,7 @@
   body.pedestrian-mode #draw-mode-popout,
   body.pedestrian-mode #grass-brush-popout,
   body.pedestrian-mode #label-mode-popout,
+  body.pedestrian-mode #amenagements-popout,
   body.pedestrian-mode #camera-group-popout,
   body.pedestrian-mode #display-group-popout,
   body.pedestrian-mode #render-group-popout,
@@ -141,6 +142,7 @@
   body.global-view-mode #draw-mode-popout,
   body.global-view-mode #grass-brush-popout,
   body.global-view-mode #label-mode-popout,
+  body.global-view-mode #amenagements-popout,
   body.global-view-mode #camera-group-popout,
   body.global-view-mode #display-group-popout,
   body.global-view-mode #render-group-popout,
@@ -211,6 +213,7 @@
   body.architect-mode #draw-mode-popout,
   body.architect-mode #grass-brush-popout,
   body.architect-mode #label-mode-popout,
+  body.architect-mode #amenagements-popout,
   body.architect-mode #camera-group-popout,
   body.architect-mode #display-group-popout,
   body.architect-mode #render-group-popout,
@@ -257,6 +260,47 @@
   #architect-mode-bar button svg{ width:18px;height:18px;stroke-width:2; }
   #architect-mode-bar button iconify-icon{ width:18px;height:18px; }
   #architect-mode-bar #architect-bar-sep{ width:1px;align-self:stretch;background:rgba(255,255,255,.18);margin:2px 2px; }
+
+  /* ---------- Outil "Aménagements" : menu d'assets (à droite du bouton),
+     même mécanique que #label-mode-popout : position "fixed" calculée en JS ---------- */
+  #amenagements-popout{
+    position:fixed;z-index:30;display:none;flex-direction:column;gap:6px;
+    min-width:200px;padding:6px;border-radius:8px;
+    background:rgba(24,36,48,.97);border:1px solid #2a3946;
+    backdrop-filter:blur(6px);box-shadow:0 8px 24px rgba(0,0,0,.45);
+  }
+  #amenagements-popout.show{display:flex;}
+  #amenagements-menu-list{display:flex;flex-direction:column;gap:4px;}
+  .amenagement-item{
+    display:flex;align-items:center;gap:10px;width:100%;padding:7px 10px;
+    font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;
+    background:var(--ink-2);border:1px solid #2a3946;color:var(--paper);
+    border-radius:4px;cursor:pointer;transition:all .12s ease;text-align:left;
+  }
+  .amenagement-item:hover{border-color:var(--accent);color:#fff;}
+  .amenagement-item.active{border-color:var(--accent);background:rgba(46,232,255,.14);color:#fff;box-shadow:0 0 10px rgba(46,232,255,.25);}
+  .amenagement-item.disabled{opacity:.4;pointer-events:none;}
+  .amenagement-item iconify-icon{flex-shrink:0;}
+  .amenagement-item .am-label{flex:1 1 auto;}
+  .amenagement-item .am-count{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);}
+
+  /* ---------- Mode Architecte : loupe + / loupe − / main, au survol de
+     l'image principale (positionnés en JS dans son coin bas-droit) ---------- */
+  #architect-zoom-tools{
+    display:none;position:fixed;z-index:605;gap:4px;padding:4px;border-radius:8px;
+    background:rgba(15,22,28,.9);border:1px solid var(--accent);
+    box-shadow:0 6px 18px rgba(0,0,0,.5);
+  }
+  body.architect-mode #architect-zoom-tools.show{display:flex;}
+  #architect-zoom-tools button{
+    width:32px;height:32px;display:flex;align-items:center;justify-content:center;
+    background:transparent;border:1px solid transparent;color:var(--paper);
+    border-radius:6px;cursor:pointer;transition:all .12s ease;
+  }
+  #architect-zoom-tools button:hover:not(:disabled){background:rgba(46,232,255,.14);color:#fff;}
+  #architect-zoom-tools button.active{background:var(--accent);color:#04141a;}
+  #architect-zoom-tools button:disabled{opacity:.35;cursor:default;}
+  #architect-zoom-tools button svg{width:18px;height:18px;stroke-width:2;}
 
   #status-line{
     position:absolute;top:70px;right:132px;z-index:5;

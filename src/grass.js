@@ -11,12 +11,13 @@
 import * as THREE from "three";
 import {
   camera, controls, renderer, worldRoot, siteRoot, buildings, treesGroup,
-  drawing, drawMenuOpen, editingBuildingId, treePlacing, labelPlacing,
+  drawing, drawMenuOpen, editingBuildingId, treePlacing, amenagementPlacing, labelPlacing,
   pointer, raycaster,
 } from './state.js';
 import * as AppState from './state.js';
 import * as ExtGare from './extension-gare.js';
 import * as Trees from './trees.js';
+import * as Amenagements from './amenagements.js';
 
 // Dépendances pas encore extraites (outil de tracé, outil Label, édition de
 // bâtiment, stats du panneau...), injectées une fois par initGrass().
@@ -243,6 +244,7 @@ export function startGrassTool(){
   if(drawing) cancelDraw();
   if(drawMenuOpen) closeDrawMenu();
   if(treePlacing) Trees.stopTreeTool();
+  if(amenagementPlacing) Amenagements.stopAmenagementsTool();
   if(labelPlacing) stopLabelTool();
   ExtGare.cancelExtensionGareIfActive();
   if(editingBuildingId) stopEditBuildingShape();

@@ -14,7 +14,7 @@
 import * as THREE from "three";
 import {
   camera, controls, renderer, worldRoot, orthoCamera, buildZone, buildings,
-  planViewActive, drawing, drawMenuOpen, editingBuildingId, treePlacing,
+  planViewActive, drawing, drawMenuOpen, editingBuildingId, treePlacing, amenagementPlacing,
   grassPainting, pointer, raycaster,
 } from './state.js';
 import * as AppState from './state.js';
@@ -22,6 +22,7 @@ import { clampPointToPolygon, pointInPolygon } from './geometry-utils.js';
 import { NEON_BLUE, NEON_BLUE_CSS } from './config.js';
 import * as ExtGare from './extension-gare.js';
 import * as Trees from './trees.js';
+import * as Amenagements from './amenagements.js';
 import * as Grass from './grass.js';
 
 // Dépendances pas encore extraites (outil de tracé, édition de bâtiment...),
@@ -240,6 +241,7 @@ btnLabel.addEventListener('click', ()=>{
     if(drawing) cancelDraw();
     if(drawMenuOpen) closeDrawMenu();
     if(treePlacing) Trees.stopTreeTool();
+    if(amenagementPlacing) Amenagements.stopAmenagementsTool();
     if(grassPainting) Grass.stopGrassTool();
     ExtGare.cancelExtensionGareIfActive();
     if(editingBuildingId) stopEditBuildingShape();

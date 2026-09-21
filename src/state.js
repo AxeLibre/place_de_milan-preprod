@@ -40,6 +40,7 @@ export let pointer = null;
 export let raycaster = null;
 
 export let treesGroup = null;
+export let amenagementsGroup = null;
 export let quartierGroup = null;
 export let sun = null;
 export let hemiLight = null;
@@ -50,6 +51,7 @@ export let labelsVisible = true;
 export let drawing = false;
 export let drawMenuOpen = false;
 export let treePlacing = false;
+export let amenagementPlacing = false;
 export let grassPainting = false;
 export let labelPlacing = false;
 
@@ -85,6 +87,7 @@ export function setPointer(v){ pointer = v; }
 export function setRaycaster(v){ raycaster = v; }
 
 export function setTreesGroup(v){ treesGroup = v; }
+export function setAmenagementsGroup(v){ amenagementsGroup = v; }
 export function setQuartierGroup(v){ quartierGroup = v; }
 export function setSun(v){ sun = v; }
 export function setHemiLight(v){ hemiLight = v; }
@@ -95,5 +98,6 @@ export function setLabelsVisible(v){ labelsVisible = v; }
 export function setDrawing(v){ drawing = v; }
 export function setDrawMenuOpen(v){ drawMenuOpen = v; }
 export function setTreePlacing(v){ treePlacing = v; }
+export function setAmenagementPlacing(v){ amenagementPlacing = v; }
 export function setGrassPainting(v){ grassPainting = v; }
 export function setLabelPlacing(v){ labelPlacing = v; }

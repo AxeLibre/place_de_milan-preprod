@@ -13,7 +13,7 @@ import * as THREE from "three";
 import {
   scene, controls, renderer, camera, orthoCamera, planViewActive,
   hallMesh, extensionGareMesh, hallFacadeWorldNormal, siteRoot,
-  drawing, drawMenuOpen, treePlacing, grassPainting, labelPlacing, editingBuildingId,
+  drawing, drawMenuOpen, treePlacing, amenagementPlacing, grassPainting, labelPlacing, editingBuildingId,
   nextId
 } from './state.js';
 import { convexHullXZ, dedupe } from './geometry-utils.js';
@@ -22,10 +22,10 @@ import { NEON_BLUE } from './config.js';
 
 // ---- Dépendances injectées (fonctions d'autres outils, encore dans index.html) ----
 let flashStatus, groundPointFromEvent, cancelDraw, closeDrawMenu,
-    stopTreeTool, stopGrassTool, stopLabelTool, stopEditBuildingShape;
+    stopTreeTool, stopGrassTool, stopLabelTool, stopEditBuildingShape, stopAmenagementsTool;
 export function initExtensionGare(deps){
   ({ flashStatus, groundPointFromEvent, cancelDraw, closeDrawMenu,
-     stopTreeTool, stopGrassTool, stopLabelTool, stopEditBuildingShape } = deps);
+     stopTreeTool, stopGrassTool, stopLabelTool, stopEditBuildingShape, stopAmenagementsTool } = deps);
 }
 
 const btnExtensionGare = document.getElementById('btn-toggle-extension-gare');
@@ -446,6 +446,7 @@ function startExtensionGareTool(){
   if(drawing) cancelDraw();
   if(drawMenuOpen) closeDrawMenu();
   if(treePlacing) stopTreeTool();
+  if(amenagementPlacing) stopAmenagementsTool();
   if(grassPainting) stopGrassTool();
   if(labelPlacing) stopLabelTool();
   if(editingBuildingId) stopEditBuildingShape();
@@ -494,6 +495,7 @@ function extShowExtensionForEditing(){
   if(drawing) cancelDraw();
   if(drawMenuOpen) closeDrawMenu();
   if(treePlacing) stopTreeTool();
+  if(amenagementPlacing) stopAmenagementsTool();
   if(grassPainting) stopGrassTool();
   if(labelPlacing) stopLabelTool();
   if(editingBuildingId) stopEditBuildingShape();

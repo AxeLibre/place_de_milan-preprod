@@ -396,11 +396,13 @@ function treeGroundHit(rc){
 // réutilisé par la pose de labels pour obtenir un point au sol fidèle à ce
 // qui est visuellement cliqué, y compris caméra inclinée (contrairement au
 // simple plan invisible utilisé par groundPointFromEvent).
-export function siteGroundHitFromEvent(ev){
+export function siteGroundHitFromEvent(ev, cam){
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((ev.clientX-rect.left)/rect.width)*2-1;
   pointer.y = -((ev.clientY-rect.top)/rect.height)*2+1;
-  raycaster.setFromCamera(pointer, camera);
+  // `cam` (optionnel) : caméra réellement affichée — l'orthographique en vue
+  // plan (voir l'outil Aménagements) ; par défaut la caméra perspective.
+  raycaster.setFromCamera(pointer, cam || camera);
   const hit = treeGroundHit(raycaster);
   return hit ? hit.point : null;
 }
