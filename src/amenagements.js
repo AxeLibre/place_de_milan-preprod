@@ -216,7 +216,7 @@ function syncLamp(rec){
   if(!tpl || !tpl.lightOffset) return;
   _lampPos.copy(tpl.lightOffset).applyAxisAngle(new THREE.Vector3(0,1,0), rec.rot).add(rec.group.position);
   const id = 'am:' + rec.id;
-  NightLights.registerSource(id, _lampPos, { color:0xffe4f2, intensity:LAMP_LIGHT.intensity, distance:LAMP_LIGHT.distance, decay:LAMP_LIGHT.decay });
+  NightLights.registerSource(id, _lampPos, { color:0xffe4f2, intensity:LAMP_LIGHT.intensity, distance:LAMP_LIGHT.distance, decay:LAMP_LIGHT.decay, groundY:rec.group.position.y });
 }
 function removeAmenagement(rec){
   if(!rec) return;
