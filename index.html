@@ -7704,32 +7704,32 @@ function ensurePedestrianLod(){
   const meshes = specs.map(({ role, size, c })=>{
     const g = new THREE.BoxGeometry(Math.max(size.x,0.05), Math.max(size.y,0.05), Math.max(size.z,0.05));
     g.translate(c.x, c.y, c.z);
-    // vertexColors:true indispensable : sans lui Three.js n'inclut pas la
-    // multiplication par instanceColor dans le shader (matériau resté blanc
-    // quel que soit setColorAt() — même bug constaté et corrigé sur les
-    // arbres, voir trees.js). customProgramCacheKey : évite qu'un matériau
-    // "ressemblant" à un autre déjà compilé ailleurs se voie réattribuer par
-    // erreur un programme sans support d'instanceColor (même bug constaté et
-    // corrigé sur le tronc des arbres, voir trees.js).
+    // VRAIE cause du "LOD piétons gris" (trouvée par inspection directe du
+    // shader compilé, pas par supposition) : avec `vertexColors:true`,
+    // Three.js calcule `vColor = vec3(1.0); vColor *= color; vColor *=
+    // instanceColor;` — `color` étant un attribut de géométrie PAR SOMMET,
+    // distinct de `instanceColor` (par INSTANCE). Un `THREE.BoxGeometry` n'a
+    // pas cet attribut `color` : WebGL le lit alors à sa valeur par défaut
+    // (0,0,0), ce qui annule `vColor` — et donc la couleur réelle de CHAQUE
+    // piéton — quelle que soit `instanceColor`. Seul le plancher émissif fixe
+    // restait visible, identique pour tous : d'où l'aspect "tous gris".
+    // Confirmé : en changeant `instanceColor` d'une instance testée (rouge,
+    // cyan…), le pixel rendu ne bougeait pas — seul un ajout au shader SANS
+    // dépendance à `vColor` apparaissait bien à l'écran.
+    // Correctif : donner à la géométrie un attribut `color` neutre (blanc),
+    // pour que cette multiplication ne détruise plus rien — `vColor` ne
+    // dépend alors plus que d'`instanceColor`, comme voulu.
+    const vertCount = g.attributes.position.count;
+    g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(vertCount*3).fill(1), 3));
     const pedPartMat = new THREE.MeshLambertMaterial({ color:0xffffff, vertexColors:true });
     pedPartMat.customProgramCacheKey = () => 'pedLodInstanced:' + pedPartMat.uuid;
-    // Plancher émissif neutre, fixe (indépendant de instanceColor —
-    // MeshLambertMaterial n'a qu'un seul emissive PAR MATÉRIAU, pas par
-    // instance, donc impossible de le proportionner à la couleur de chaque
-    // piéton sans shader dédié). Constaté empiriquement (sonde temporaire
-    // dans la scène réelle, même position rendue plusieurs fois avec des
-    // emissive croissants) : un piéton en tenue sombre (jean foncé/noir,
-    // très représenté dans PEDESTRIAN_PANT_COLORS et
-    // PEDESTRIAN_TSHIRT_COLORS) DANS UNE ZONE SANS LUMIÈRE DIRECTE NI
-    // AMBIANTE (ombre, mode Nuit hors flaques de lumière) s'écrase en noir
-    // TOTAL (0,0,0) sans ce plancher — la maquette n'a pas de lumière
-    // ambiante globale (retirée pour la perf, seuls le soleil/les lampadaires
-    // éclairent), donc rien ne rattrape un MeshLambertMaterial non éclairé.
-    // 0x1c1c1c ne donnait que 8/255 dans ce pire cas (encore perçu comme
-    // noir) ; 0x444444 donne 49/255, clairement une silhouette sombre et non
-    // un vide noir, tout en restant négligeable dès qu'un peu de lumière
-    // (directe ou lampadaire) atteint le piéton — voir sondage ci-dessus.
-    pedPartMat.emissive.setHex(0x444444);
+    // Plancher d'auto-illumination minimal : la maquette n'a pas de lumière
+    // ambiante globale (retirée pour la perf) — sans lui, un piéton hors de
+    // toute lumière directe/lampadaire s'écrase en noir total (voir
+    // historique : 0x1c1c1c insuffisant, 0x444444 retenu). Avec `vColor`
+    // maintenant réparé, ce plancher s'ajoute à la VRAIE couleur du piéton
+    // au lieu de la remplacer.
+    pedPartMat.emissive.setHex(0x222222);
     pedPartMat.emissiveIntensity = 1;
     const m = new THREE.InstancedMesh(g, pedPartMat, PED_LOD_CAPACITY);
     m.userData.role = role;
