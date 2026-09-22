@@ -31,7 +31,7 @@ export const POOL_SIZE = 8;
 const FADE_SECONDS = 1.1;           // durée d'un fondu complet d'une lumière du pool (allumage ou extinction), adouci en S
 const OUT_OF_VIEW_PENALTY = 6;      // multiplicateur de distance² pour une source hors champ
 const HYSTERESIS = 0.7;             // une source déjà allumée garde sa place tant que score×0.7 reste dans le top N
-const POOL_CAPACITY = 128;          // nombre max de flaques (sources)
+const POOL_CAPACITY = 1024;         // nombre max de flaques (sources) — un seul draw call par couche, quel que soit leur nombre
 const PUDDLE_STRENGTH = 5;          // couche MULTIPLICATIVE : sol × (1 + lumière) — même teinte qu'une vraie lumière
 const PUDDLE_GLOW = 0.55;           // couche ADDITIVE : lueur visible même sur l'asphalte sombre (que la couche multiplicative n'éclaire presque pas)
 const PUDDLE_GLOW_SATURATION = 1.5; // >1 : teinte de la lueur additive plus saturée (plus chaude), pour ne pas virer au blanc/froid
@@ -88,22 +88,37 @@ export function initNightLights(){
   // teinte chaude que la lampe éclairée, alors qu'un mélange additif y ajoutait
   // la couleur brute de la lampe (qui virait au blanc/froid après le tone
   // mapping). Pas de brouillard propre : le sol qu'elle éclaire est déjà brumeux.
+  // vertexColors:true est INDISPENSABLE ici : sans lui, Three.js n'inclut pas
+  // la multiplication par instanceColor dans le shader, et le matériau reste
+  // à sa couleur de base (blanc) quel que soit setColorAt() — bug constaté
+  // (arbres blancs) sur le même pattern ailleurs (voir trees.js), corrigé
+  // partout où setColorAt()/instanceColor est utilisé.
   const mat = new THREE.MeshBasicMaterial({
-    map: makePuddleTexture(), color: 0xffffff, transparent: true, depthWrite: false, fog: false,
+    map: makePuddleTexture(), color: 0xffffff, vertexColors: true, transparent: true, depthWrite: false, fog: false,
     blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
     blendSrc: THREE.DstColorFactor, blendDst: THREE.OneFactor,
     blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
+  // customProgramCacheKey : évite qu'un matériau "ressemblant" à un autre déjà
+  // compilé ailleurs dans la scène se voie réattribuer par erreur un
+  // programme sans support d'instanceColor (bug constaté et corrigé sur le
+  // tronc des arbres — même pattern setColorAt/instanceColor — voir trees.js).
+  mat.customProgramCacheKey = () => 'nightPuddle:' + mat.uuid;
   const tex = mat.map;
   // Deuxième couche : lueur ADDITIVE. La couche multiplicative reproduit la
   // teinte d'une vraie lumière, mais n'éclaire presque pas un sol très sombre
   // (asphalte) — la flaque devenait quasi invisible, surtout en vue de dessus.
+  // fog:false : le mélange de brouillard de Three.js ajoutait la couleur du
+  // brouillard (bleutée) sur TOUT le carré de la flaque en mode additif — des
+  // carrés bleus visibles de loin. L'atténuation par la distance est faite à la
+  // main (voir fadeByFog), sur la couleur de chaque instance.
   const glowMat = new THREE.MeshBasicMaterial({
-    map: tex, color: 0xffffff, transparent: true, depthWrite: false, fog: true,
+    map: tex, color: 0xffffff, vertexColors: true, transparent: true, depthWrite: false, fog: false,
     blending: THREE.AdditiveBlending,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
+  glowMat.customProgramCacheKey = () => 'nightPuddleGlow:' + glowMat.uuid;
   function makeLayer(material, order){
     const m = new THREE.InstancedMesh(geo, material, POOL_CAPACITY);
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -134,6 +149,9 @@ export function registerSource(id, pos, opts){
     intensity: opts.intensity !== undefined ? opts.intensity : 18,
     distance: opts.distance !== undefined ? opts.distance : 110,
     decay: opts.decay !== undefined ? opts.decay : 1.1,
+    // Source "LOD seulement" (ex. lumières "global-light" de global.glb) : rien
+    // qu'une flaque de lumière au sol, JAMAIS de vraie lumière du pool.
+    lodOnly: !!opts.lodOnly,
   });
   puddlesDirty = true;
 }
@@ -180,7 +198,7 @@ const _sphere = new THREE.Sphere();
 
 // À appeler à chaque frame. `focus` = point regardé (repère de worldRoot),
 // `cam` = caméra réellement affichée (pour le test de champ).
-export function updateNightLights(dt, focus, cam){
+export function updateNightLights(dt, focus, cam, fog){
   if(!active || !pool.length) return;
 
   if(puddlesDirty) rebuildPuddles();
@@ -191,6 +209,7 @@ export function updateNightLights(dt, focus, cam){
   const held = new Set(); pool.forEach(p=>{ if(p.src) held.add(p.src.id); });
   const ranked = [];
   sources.forEach(s=>{
+    if(s.lodOnly) return; // pas candidate à une vraie lumière
     const dx = s.pos.x - focus.x, dz = s.pos.z - focus.z;
     let score = dx*dx + dz*dz;
     _sphere.center.copy(s.pos); _sphere.radius = 25;
@@ -241,7 +260,7 @@ export function updateNightLights(dt, focus, cam){
   puddleIndex.forEach((i, id)=>{
     const s = sources.get(id); if(!s) return;
     const f = 1 - PUDDLE_LIT_DIMMING * (lit.get(id) || 0);
-    const pw = Math.min(1.6, Math.sqrt(s.intensity / 18)) * f;
+    const pw = Math.min(1.6, Math.sqrt(s.intensity / 18)) * f * fadeByFog(s, cam, fog);
     const k = PUDDLE_STRENGTH * pw;
     puddles.setColorAt(i, _c.setRGB(s.color.r * k, s.color.g * k, s.color.b * k));
     const g = PUDDLE_GLOW * pw;
@@ -255,6 +274,16 @@ export function updateNightLights(dt, focus, cam){
     if(puddles.instanceColor) puddles.instanceColor.needsUpdate = true;
     if(puddlesGlow.instanceColor) puddlesGlow.instanceColor.needsUpdate = true;
   }
+}
+
+// Atténuation d'une flaque avec la distance, sur les mêmes bornes que le
+// brouillard de la scène (0 = éteinte, 1 = pleine) : une flaque n'apparaît pas
+// plus loin que le brouillard n'a fini de tout voiler.
+function fadeByFog(s, cam, fog){
+  if(!fog) return 1;
+  const d = cam.position.distanceTo(s.pos);
+  const t = Math.min(1, Math.max(0, (d - fog.near) / Math.max(1e-3, fog.far - fog.near)));
+  return 1 - t*t*(3 - 2*t);
 }
 
 // Flaques de toutes les sources (un seul draw call).

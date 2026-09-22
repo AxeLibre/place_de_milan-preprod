@@ -148,6 +148,23 @@ function buildTreePool(){
     // (setTreesOverlapWarning) peut la remplacer par un rouge plein, comme
     // avant (identique à l'ancien m.color.setHex() par arbre).
     if(mat.color) mat.color.set(0xffffff);
+    // IMPORTANT : sans vertexColors=true, Three.js n'inclut PAS la
+    // multiplication par instanceColor dans le fragment shader — le
+    // matériau restait à sa couleur de base (blanc) quel que soit
+    // setColorAt(), d'où des arbres blancs plutôt que tronc/feuillage
+    // colorés (bug constaté à l'écran, corrigé ici).
+    mat.vertexColors = true;
+    // IMPORTANT (bug corrigé, confirmé par mesure) : Three.js met en cache le
+    // programme shader compilé par une clé calculée à partir des propriétés
+    // du matériau — pas de son identité (uuid). Un matériau cloné dont les
+    // propriétés "ressemblent" par coïncidence à un AUTRE matériau déjà
+    // compilé ailleurs dans la scène (sans instanceColor) peut se voir
+    // silencieusement réattribuer CE programme-là au lieu d'en compiler un
+    // nouveau — constaté ici : le tronc restait gris uniforme (aucune
+    // couleur), alors que le feuillage (dont les propriétés ne matchaient
+    // par chance aucun autre matériau) fonctionnait. Une clé de cache
+    // garantie unique par matériau élimine tout risque de collision.
+    mat.customProgramCacheKey = () => 'treeInstanced:' + mat.uuid;
     const mesh = new THREE.InstancedMesh(geo, mat, TREE_CAPACITY);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.count = 0; // relevé au fil des plantations (voir bumpTreePoolCount) : jamais plus que nécessaire à dessiner
