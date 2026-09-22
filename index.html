@@ -7497,7 +7497,6 @@ function instantiateVehiclePart(cfg, wagonIndex){
         m.color.setHex(hex);
         carPaletteMaterials[hex] = m;
       }
-      obj.userData.bodyHex = hex; // couleur de carrosserie, reprise par le LOD lointain (voir ensureVehicleLod)
       const carMat = carPaletteMaterials[hex];
       if(carMat){
         obj.traverse(o=>{
@@ -7673,7 +7672,16 @@ function ensurePedestrianLod(){
   const meshes = specs.map(({ role, size, c })=>{
     const g = new THREE.BoxGeometry(Math.max(size.x,0.05), Math.max(size.y,0.05), Math.max(size.z,0.05));
     g.translate(c.x, c.y, c.z);
-    const m = new THREE.InstancedMesh(g, new THREE.MeshLambertMaterial({ color:0xffffff }), PED_LOD_CAPACITY);
+    // vertexColors:true indispensable : sans lui Three.js n'inclut pas la
+    // multiplication par instanceColor dans le shader (matériau resté blanc
+    // quel que soit setColorAt() — même bug constaté et corrigé sur les
+    // arbres, voir trees.js). customProgramCacheKey : évite qu'un matériau
+    // "ressemblant" à un autre déjà compilé ailleurs se voie réattribuer par
+    // erreur un programme sans support d'instanceColor (même bug constaté et
+    // corrigé sur le tronc des arbres, voir trees.js).
+    const pedPartMat = new THREE.MeshLambertMaterial({ color:0xffffff, vertexColors:true });
+    pedPartMat.customProgramCacheKey = () => 'pedLodInstanced:' + pedPartMat.uuid;
+    const m = new THREE.InstancedMesh(g, pedPartMat, PED_LOD_CAPACITY);
     m.userData.role = role;
     m.castShadow = false; m.receiveShadow = false;
     m.frustumCulled = false; // les instances sont partout : pas de sphère englobante utile
@@ -7692,7 +7700,16 @@ function ensurePedestrianLod(){
 function pedestrianLodSet(slot, position, quaternion, colors){
   _pedM.compose(position, quaternion, _pedS);
   pedLod.meshes.forEach(m=> m.setMatrixAt(slot, _pedM));
-  if(!pedLod.shown[slot] && colors){
+  // BUG CORRIGÉ : la couleur n'était écrite QU'UNE FOIS, à la toute première
+  // apparition en silhouette de ce slot (garde `!pedLod.shown[slot]`) — tant
+  // que ce premier passage n'avait pas encore eu lieu (juste après le
+  // chargement de la page, ou après un grand saut de caméra qui fait basculer
+  // beaucoup de piétons d'un coup), le piéton restait bloqué sur le gris de
+  // secours posé à la construction du pool (0x888888), qui paraît noir de
+  // loin. On réécrit désormais la couleur À CHAQUE image tant qu'il est en
+  // silhouette — coût négligeable (une écriture dans un tableau), élimine
+  // toute fenêtre où la couleur peut rester fausse.
+  if(colors){
     const byRole = [colors.pant, colors.tshirt, colors.skin, colors.skin];
     pedLod.meshes.forEach(m=>{
       m.setColorAt(slot, _pedC.setHex(byRole[m.userData.role]));
@@ -7714,124 +7731,13 @@ function pedestrianLodRelease(agent){
   agent.lodSlot = null;
 }
 function releaseRoutePedestrians(r){
-  if(!r) return;
-  if(r.type === 'pieton') r.agents.forEach(pedestrianLodRelease);
-  else r.agents.forEach(vehicleLodRelease);
+  if(r && r.type === 'pieton') r.agents.forEach(pedestrianLodRelease);
 }
 // Le groupe de silhouettes suit la visibilité des voies de piétons (case à
 // cocher "Piétons", mode Architecte, Vue Globale...) — voir
 // applyAgentTypeVisibility() et activateGlobalView().
 function syncPedestrianLodVisibility(){
   if(pedLod) pedLod.group.visible = routes.some(r=> r.type==='pieton' && r.vehicleGroup.visible);
-  for(const key in vehLods){
-    const lod = vehLods[key];
-    lod.group.visible = routes.some(r=> ROUTE_TYPES[r.type] && ROUTE_TYPES[r.type].part===key && r.vehicleGroup.visible);
-    lod.lights.visible = isNight; // feux des véhicules lointains : allumés la nuit seulement
-  }
-}
-
-/* ------------------------------------------------------------
-   LOD DES VÉHICULES (voitures, bus) — PERFORMANCE.
-   Chaque voiture/bus = 5 à 7 maillages. Au-delà de VEH_FULL_DIST de la
-   caméra, un véhicule est rendu par UNE silhouette fusionnée du modèle réel :
-   3 InstancedMesh par type (carrosserie à la couleur du véhicule, détails aux
-   couleurs de leurs matériaux, feux — allumés la nuit), partagés par tous les
-   véhicules lointains. Même mécanique de slots que les piétons.
-   ------------------------------------------------------------ */
-const VEH_FULL_DIST = 110, VEH_FULL_HYST = 10;
-const VEH_FULL_DIST_SQ = VEH_FULL_DIST*VEH_FULL_DIST;
-const VEH_FULL_FAR_SQ = (VEH_FULL_DIST+VEH_FULL_HYST)*(VEH_FULL_DIST+VEH_FULL_HYST);
-const VEH_LOD_CAPACITY = 800;
-const vehLods = {}; // 'voiture' | 'bus' -> { group, body, detail, lights, meshes, free, shown }
-function ensureVehicleLod(key){
-  if(vehLods[key]) return vehLods[key];
-  const template = vehicleTemplates && vehicleTemplates[key];
-  if(!template) return null;
-  const bodyMat = vehicleBodyMaterials[key];
-  const t = template.clone(true); t.position.set(0,0,0); t.quaternion.identity(); t.updateMatrixWorld(true);
-  const parts = { body:[], detail:[], lights:[] };
-  t.traverse(o=>{
-    if(!o.isMesh || !o.geometry) return;
-    const m = Array.isArray(o.material) ? o.material[0] : o.material;
-    if(!m) return;
-    const g = o.geometry.index ? o.geometry.toNonIndexed() : o.geometry.clone();
-    g.applyMatrix4(o.matrixWorld); // pose du segment dans le repère du véhicule (échelle du gabarit incluse)
-    const clean = new THREE.BufferGeometry();
-    clean.setAttribute('position', g.attributes.position);
-    if(g.attributes.normal) clean.setAttribute('normal', g.attributes.normal);
-    else clean.computeVertexNormals();
-    const isBody = !!bodyMat && m === bodyMat;
-    const isLight = /phare/i.test(m.name || '');
-    if(!isBody){
-      // Couleur du matériau d'origine figée en couleur de sommet ; un feu émet
-      // (blanc/rouge) : on prend sa couleur d'émission si elle existe.
-      const col = (isLight && m.emissive && m.emissive.getHex() !== 0) ? m.emissive : m.color;
-      const arr = new Float32Array(clean.attributes.position.count * 3);
-      for(let i=0;i<arr.length;i+=3){ arr[i]=col.r; arr[i+1]=col.g; arr[i+2]=col.b; }
-      clean.setAttribute('color', new THREE.BufferAttribute(arr, 3));
-    }
-    (isBody ? parts.body : isLight ? parts.lights : parts.detail).push(clean);
-  });
-  const mk = (list, material, cast)=>{
-    if(!list.length) return null;
-    const geo = mergeGeometries(list, false);
-    if(!geo) return null;
-    const m = new THREE.InstancedMesh(geo, material, VEH_LOD_CAPACITY);
-    m.frustumCulled = false; m.castShadow = cast; m.receiveShadow = cast;
-    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    for(let i=0;i<VEH_LOD_CAPACITY;i++) m.setMatrixAt(i, _pedZero);
-    m.count = 0; // ajusté au nombre de slots réellement utilisés (voir lodBump)
-    return m;
-  };
-  const body = mk(parts.body, new THREE.MeshLambertMaterial({ color:0xffffff }), true);
-  const detail = mk(parts.detail, new THREE.MeshLambertMaterial({ vertexColors:true }), true);
-  const lights = mk(parts.lights, new THREE.MeshBasicMaterial({ vertexColors:true, toneMapped:false }), false);
-  if(body) for(let i=0;i<VEH_LOD_CAPACITY;i++) body.setColorAt(i, _pedC.setHex(0x888888));
-  const group = new THREE.Group(); group.name = 'vehicleLod_' + key;
-  [body, detail, lights].forEach(m=>{ if(m) group.add(m); });
-  worldRoot.add(group);
-  const free = []; for(let i=VEH_LOD_CAPACITY-1;i>=0;i--) free.push(i);
-  const lod = { group, body, detail, lights: lights || { visible:false }, meshes:[body, detail, lights].filter(Boolean), free, hi:0, shown:new Uint8Array(VEH_LOD_CAPACITY) };
-  vehLods[key] = lod;
-  return lod;
-}
-function vehicleLodHide(lod, slot){
-  if(!lod.shown[slot]) return;
-  lod.meshes.forEach(m=> m.setMatrixAt(slot, _pedZero));
-  lod.shown[slot] = 0;
-}
-function vehicleLodRelease(agent){
-  if(agent.lodSlot === undefined || agent.lodSlot === null || !agent.lodKey) return;
-  const lod = vehLods[agent.lodKey];
-  if(lod){ vehicleLodHide(lod, agent.lodSlot); lod.meshes.forEach(m=>{ m.instanceMatrix.needsUpdate = true; }); lod.free.push(agent.lodSlot); }
-  agent.lodSlot = null;
-}
-// Un véhicule (voiture/bus) : rig complet de près, silhouette instanciée de
-// loin. Retourne true si des instances ont changé (à téléverser).
-function tickVehicleLod(a, r, m, camPos){
-  if(a.lodSlot === undefined){
-    const key = ROUTE_TYPES[r.type] && ROUTE_TYPES[r.type].part;
-    const lod = key ? ensureVehicleLod(key) : null;
-    if(lod && lod.free.length){ a.lodSlot = lod.free.pop(); a.lodKey = key; lodBump(lod, a.lodSlot); } else a.lodSlot = null;
-  }
-  if(a.lodSlot === null) return false;
-  const lod = vehLods[a.lodKey];
-  const d2 = m.position.distanceToSquared(camPos);
-  if(d2 < (m.visible ? VEH_FULL_FAR_SQ : VEH_FULL_DIST_SQ)){
-    if(!m.visible) m.visible = true;
-    if(lod.shown[a.lodSlot]){ vehicleLodHide(lod, a.lodSlot); return true; }
-    return false;
-  }
-  if(m.visible) m.visible = false;
-  _pedM.compose(m.position, m.quaternion, _pedS);
-  lod.meshes.forEach(mm=> mm.setMatrixAt(a.lodSlot, _pedM));
-  if(lod.body){
-    // Voiture : couleur de carrosserie du véhicule ; bus : matériau partagé (recolorable en direct).
-    if(m.userData.bodyHex !== undefined) lod.body.setColorAt(a.lodSlot, _pedC.setHex(m.userData.bodyHex));
-    else if(vehicleBodyMaterials[a.lodKey]) lod.body.setColorAt(a.lodSlot, vehicleBodyMaterials[a.lodKey].color);
-  }
-  lod.shown[a.lodSlot] = 1;
-  return true;
 }
 // Nombre maximal de piétons en rig ANIMÉ complet (les plus proches de la caméra),
 // quelle que soit la taille de la foule : ~0,1 ms chacun (12 draw calls + mixer),
@@ -7840,7 +7746,7 @@ const PED_MAX_FULL_RIGS = 70;
 const _pedCand = [];
 function tickAgents(dt){
   syncPedestrianLodVisibility();
-  let lodTouched = false, vehTouched = false;
+  let lodTouched = false;
   _pedCand.length = 0;
   for(const r of routes){
     const len = r.curve.getLength();
@@ -7853,7 +7759,6 @@ function tickAgents(dt){
     } else {
       r.speedFactor = 1;
     }
-    const isVehLod = (r.type==='voiture' || r.type==='bus');
     r.agents.forEach((a)=>{
       a.t = (a.t + (r.speedFactor*a.speed*dt)/len) % 1;
       // le wagon n'est jamais exactement à a.t : il traîne derrière de
@@ -7881,8 +7786,6 @@ function tickAgents(dt){
           if(a.lodSlot !== null) lodBump(lod, a.lodSlot);
         }
         _pedCand.push({ a, m, d2: m.position.distanceToSquared(camera.position) });
-      } else if(isVehLod){
-        if(tickVehicleLod(a, r, m, camera.position)) vehTouched = true;
       } else if(a.mixer){
         a.mixer.update(dt);
       }
@@ -7911,11 +7814,6 @@ function tickAgents(dt){
     }
   }
   if(lodTouched) pedLod.meshes.forEach(mm=>{ mm.instanceMatrix.needsUpdate = true; });
-  if(vehTouched) for(const key in vehLods){
-    const lod = vehLods[key];
-    lod.meshes.forEach(mm=>{ mm.instanceMatrix.needsUpdate = true; });
-    if(lod.body && lod.body.instanceColor) lod.body.instanceColor.needsUpdate = true;
-  }
 }
 
 // Un train ne boucle pas en continu sur sa voie comme les autres véhicules :
