@@ -1350,6 +1350,29 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 0.85;
 viewport.appendChild(renderer.domElement);
 
+// Filtrage anisotrope : les textures des façades (motifs de fenêtres,
+// bardage...) vues en biais et de loin scintillaient/rayaient à l'écran
+// (moiré classique de minification de texture) — le anisotropy par défaut
+// de Three.js est 1 (désactivé). Coût quasi nul (aucun calcul par pixel
+// supplémentaire, juste plus d'échantillons de mipmap déjà en mémoire),
+// donc appliqué systématiquement à toute texture chargée. Plafonné à 8 :
+// au-delà, gain visuel négligeable pour le coût mémoire/bande passante.
+const MAX_ANISOTROPY = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+function applyAnisotropy(root){
+  const done = new Set();
+  root.traverse(o=>{
+    if(!o.isMesh || !o.material) return;
+    (Array.isArray(o.material) ? o.material : [o.material]).forEach(m=>{
+      if(!m || done.has(m)) return;
+      done.add(m);
+      ['map','normalMap','roughnessMap','metalnessMap','aoMap','emissiveMap','alphaMap'].forEach(key=>{
+        const tex = m[key];
+        if(tex && tex.anisotropy !== MAX_ANISOTROPY){ tex.anisotropy = MAX_ANISOTROPY; tex.needsUpdate = true; }
+      });
+    });
+  });
+}
+
 // Environnement neutre généré (pas de HDRI à charger) : indispensable pour que les
 // matériaux métalliques (aluminium brossé, etc.) aient de vrais reflets et ne
 // paraissent pas ternes/plats sous un simple éclairage direct+ambiant.
@@ -2035,6 +2058,7 @@ function loadGlobalGlbIfNeeded(cb, silent){
   if(globalGlbLoaded){ cb(true); return; }
   gltfLoader.load(GLOBAL_GLB_URL, (gltf)=>{
     globalRoot.add(gltf.scene);
+    applyAnisotropy(globalRoot);
     // Sans ça, le matériau "route" (et les autres matériaux procéduraux :
     // aluminium, feuillage...) de global.glb garde sa couleur brute exportée
     // de Blender au lieu de la recoloration appliquée à place_de_milan.glb —
@@ -3124,6 +3148,7 @@ function loadSiteFromGLB(url, onFail){
       corrected = true;
       siteUpCorrected = true; // conservé pour référence/diagnostic (plus utilisé pour re-corriger quoi que ce soit ailleurs)
     }
+    applyAnisotropy(siteRoot);
     const report = onSiteLoaded();
     // La bannière de confirmation "Maquette chargée · N voie(s) importée(s)…"
     // ne s'affiche plus au chargement de la page (gênante à chaque visite) ;
@@ -3452,7 +3477,13 @@ const GROUND_LAMBERT_GAIN = 1.15;
 const GROUND_AMBIENT_DAY = 0.5, GROUND_AMBIENT_NIGHT = 0.03;
 // Émissive de nuit plus marquée pour certaines surfaces (trottoirs, gazon) :
 // malgré les lampadaires, ces zones restaient trop sobres.
-const GROUND_AMBIENT_NIGHT_BY_NAME = { 'trottoire': 0.45, 'gazon': 0.2 };
+// trottoire: 0.45 → 0.95 — trop de différence de luminosité constatée avec
+// le pied des façades (dégradé d'émissive chaud, voir FACADE_GLOW_STRENGTH
+// plus bas : ~0.5 sur une teinte proche du blanc, donc nettement plus
+// lumineux au pied des immeubles que le trottoir juste à côté au même
+// réglage 0.45 — la teinte grise du trottoire reste plus sobre que le
+// dégradé chaud des façades, mais l'écart est resserré).
+const GROUND_AMBIENT_NIGHT_BY_NAME = { 'trottoire': 0.95, 'gazon': 0.2 };
 function applyGroundAmbient(){
   const done = new Set();
   scene.traverse(o=>{
