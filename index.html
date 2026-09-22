@@ -3489,6 +3489,7 @@ function simplifyGroundMaterials(root){
     o.material = Array.isArray(o.material) ? o.material.map(conv) : conv(o.material);
   });
   applyGroundAmbient();
+  Trees.applyTreeAmbient(isNight); // même compensation ambiante, sur la vraie teinte des arbres (voir trees.js)
 }
 // Force côté double sur tous les matériaux d'un sous-arbre — appelée après
 // fixProceduralMaterials() (maquette de base) et après le chargement de
@@ -6586,6 +6587,7 @@ function ensureDayVisualEnvironment(){
   siteLights.forEach(l=> l.visible = false);
   NightLights.setNightActive(false);
   applyGroundAmbient();
+  Trees.applyTreeAmbient(isNight); // même compensation ambiante, sur la vraie teinte des arbres (voir trees.js)
 }
 function ensureNightVisualEnvironment(){
   sun.visible = false;
@@ -6597,6 +6599,7 @@ function ensureNightVisualEnvironment(){
   siteLights.forEach(l=> l.visible = true);
   NightLights.setNightActive(true);
   applyGroundAmbient();
+  Trees.applyTreeAmbient(isNight); // même compensation ambiante, sur la vraie teinte des arbres (voir trees.js)
 }
 // Applique le mode Jour à une heure solaire précise (continue) — passer
 // heavy:true lors d'une entrée depuis la Nuit (reconstruit l'environnement),
@@ -6626,6 +6629,7 @@ function refreshNightLighting(){
   siteLights.forEach(l=> l.visible = isNight);
   NightLights.setNightActive(isNight);
   applyGroundAmbient();
+  Trees.applyTreeAmbient(isNight); // même compensation ambiante, sur la vraie teinte des arbres (voir trees.js)
   staticWindowMaterials.forEach(({material})=> secureNightWindowShader(material));
   glassEmissiveMaterials.forEach(m=> secureNightWindowShader(m));
   applyVehicleLightState();
