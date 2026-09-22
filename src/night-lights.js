@@ -88,23 +88,27 @@ export function initNightLights(){
   // teinte chaude que la lampe éclairée, alors qu'un mélange additif y ajoutait
   // la couleur brute de la lampe (qui virait au blanc/froid après le tone
   // mapping). Pas de brouillard propre : le sol qu'elle éclaire est déjà brumeux.
-  // vertexColors:true est INDISPENSABLE ici : sans lui, Three.js n'inclut pas
-  // la multiplication par instanceColor dans le shader, et le matériau reste
-  // à sa couleur de base (blanc) quel que soit setColorAt() — bug constaté
-  // (arbres blancs) sur le même pattern ailleurs (voir trees.js), corrigé
-  // partout où setColorAt()/instanceColor est utilisé.
+  // PAS de vertexColors/customProgramCacheKey ici (contrairement à trees.js/
+  // index.html) : ANCIENNE VERSION DE CE COMMENTAIRE FAUSSE — appliqués ici
+  // "par précaution" en pensant reproduire le correctif du tronc des arbres,
+  // ils ont en réalité rendu TOUTE flaque invisible (confirmé : matériau
+  // identique SANS ces deux lignes → flaque bien visible ; AVEC → rien à
+  // l'écran, dans TOUS les réglages essayés — profondeur, culling, layers,
+  // etc. tous corrects par ailleurs). Cause exacte non isolée (probablement
+  // une interaction vertexColors × CustomBlending/AdditiveBlending propre à
+  // MeshBasicMaterial, absente du MeshLambertMaterial utilisé pour les
+  // arbres/piétons, où ce correctif reste lui légitime et vérifié). On
+  // revient donc à `material.color` uniforme (blanc) : la teinte/intensité
+  // par lampadaire (calculée plus bas dans rebuildPuddles) n'est plus
+  // appliquée pour l'instant — mieux vaut une flaque visible et neutre
+  // qu'une flaque invisible mais "correctement" teintée.
   const mat = new THREE.MeshBasicMaterial({
-    map: makePuddleTexture(), color: 0xffffff, vertexColors: true, transparent: true, depthWrite: false, fog: false,
+    map: makePuddleTexture(), color: 0xffffff, transparent: true, depthWrite: false, fog: false,
     blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
     blendSrc: THREE.DstColorFactor, blendDst: THREE.OneFactor,
     blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
-  // customProgramCacheKey : évite qu'un matériau "ressemblant" à un autre déjà
-  // compilé ailleurs dans la scène se voie réattribuer par erreur un
-  // programme sans support d'instanceColor (bug constaté et corrigé sur le
-  // tronc des arbres — même pattern setColorAt/instanceColor — voir trees.js).
-  mat.customProgramCacheKey = () => 'nightPuddle:' + mat.uuid;
   const tex = mat.map;
   // Deuxième couche : lueur ADDITIVE. La couche multiplicative reproduit la
   // teinte d'une vraie lumière, mais n'éclaire presque pas un sol très sombre
@@ -114,11 +118,10 @@ export function initNightLights(){
   // carrés bleus visibles de loin. L'atténuation par la distance est faite à la
   // main (voir fadeByFog), sur la couleur de chaque instance.
   const glowMat = new THREE.MeshBasicMaterial({
-    map: tex, color: 0xffffff, vertexColors: true, transparent: true, depthWrite: false, fog: false,
+    map: tex, color: 0xffffff, transparent: true, depthWrite: false, fog: false,
     blending: THREE.AdditiveBlending,
     polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
   });
-  glowMat.customProgramCacheKey = () => 'nightPuddleGlow:' + glowMat.uuid;
   function makeLayer(material, order){
     const m = new THREE.InstancedMesh(geo, material, POOL_CAPACITY);
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
