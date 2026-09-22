@@ -3477,13 +3477,13 @@ const GROUND_LAMBERT_GAIN = 1.15;
 const GROUND_AMBIENT_DAY = 0.5, GROUND_AMBIENT_NIGHT = 0.03;
 // Émissive de nuit plus marquée pour certaines surfaces (trottoirs, gazon) :
 // malgré les lampadaires, ces zones restaient trop sobres.
-// trottoire: 0.45 → 0.95 — trop de différence de luminosité constatée avec
-// le pied des façades (dégradé d'émissive chaud, voir FACADE_GLOW_STRENGTH
-// plus bas : ~0.5 sur une teinte proche du blanc, donc nettement plus
-// lumineux au pied des immeubles que le trottoir juste à côté au même
-// réglage 0.45 — la teinte grise du trottoire reste plus sobre que le
-// dégradé chaud des façades, mais l'écart est resserré).
-const GROUND_AMBIENT_NIGHT_BY_NAME = { 'trottoire': 0.95, 'gazon': 0.2 };
+// trottoire remis à 0.45 (0.95 testé puis rejeté : rendu plat/artificiel,
+// pas ce qui était voulu) — la vraie demande était plus de lumière PRÈS des
+// lampadaires, pas un trottoir uniformément plus clair partout. Traité
+// maintenant via le rayon des flaques de lumière (voir puddleRadius, dans
+// src/night-lights.js), qui couvre déjà tout matériau au sol y compris le
+// trottoire — pas besoin d'un second système redondant.
+const GROUND_AMBIENT_NIGHT_BY_NAME = { 'trottoire': 0.45, 'gazon': 0.2 };
 function applyGroundAmbient(){
   const done = new Set();
   scene.traverse(o=>{
@@ -3688,30 +3688,46 @@ function buildRoofCap(points, topY, editing, noInset){
   const outerArea = polygonAreaXZ(points);
   const hasInset = !noInset && inset.length>=3 && insetArea > 0.5 && insetArea < outerArea;
 
-  const rimMat = new THREE.MeshStandardMaterial({ color: roofRimColor, roughness:0.85, metalness:0.05, transparent: editing, opacity: editing ? 0.25 : 1.0 });
+  // polygonOffset sur les 2 matériaux : la face du dessus de l'extrusion du
+  // dernier étage existe déjà exactement à topY (couleur d'usage) — ces
+  // toitures sont posées juste au-dessus pour la recouvrir. Un simple petit
+  // décalage en Y (quelques mm) ne suffit pas à empêcher le z-fighting
+  // (scintillement de faces superposées au déplacement de la caméra,
+  // signalé sur les toits des nouveaux bâtiments) : à distance, la précision
+  // du depth buffer ne distingue plus des faces aussi proches. polygonOffset
+  // agit lui directement sur la valeur de profondeur écrite au GPU (pas sur
+  // la géométrie), fiable quelle que soit la distance — même technique déjà
+  // utilisée pour les flaques de lumière (voir night-lights.js).
+  const rimMat = new THREE.MeshStandardMaterial({
+    color: roofRimColor, roughness:0.85, metalness:0.05, transparent: editing, opacity: editing ? 0.25 : 1.0,
+    polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4,
+  });
   if(hasInset){
     const rimShape = new THREE.Shape(outer2D);
     rimShape.holes.push(new THREE.Path(inset.map(p=>new THREE.Vector2(p.x, -p.z))));
     const rimGeo = new THREE.ShapeGeometry(rimShape);
     rimGeo.rotateX(-Math.PI/2);
     const rimMesh = new THREE.Mesh(rimGeo, rimMat);
-    rimMesh.position.y = topY + 0.005;
+    rimMesh.position.y = topY + 0.02;
     rimMesh.receiveShadow = true;
     group.add(rimMesh);
 
     const insetShape = new THREE.Shape(inset.map(p=>new THREE.Vector2(p.x, -p.z)));
     const insetGeo = new THREE.ShapeGeometry(insetShape);
     insetGeo.rotateX(-Math.PI/2);
-    const insetMat = new THREE.MeshStandardMaterial({ color: roofInsetColor, roughness:0.9, metalness:0.0, transparent: editing, opacity: editing ? 0.25 : 1.0 });
+    const insetMat = new THREE.MeshStandardMaterial({
+      color: roofInsetColor, roughness:0.9, metalness:0.0, transparent: editing, opacity: editing ? 0.25 : 1.0,
+      polygonOffset: true, polygonOffsetFactor: -6, polygonOffsetUnits: -6,
+    });
     const insetMesh = new THREE.Mesh(insetGeo, insetMat);
     // Le sommet de l'extrusion du dernier étage a déjà sa propre face
     // supérieure (couleur d'usage) exactement à topY : si l'incrustation est
     // placée EN DESSOUS (topY - x), elle est invisible, cachée par ce
     // volume plein — d'où le bug où le centre du toit restait couleur
     // d'usage au lieu de "gazon". On la place donc légèrement AU-DESSUS,
-    // comme le rebord, avec un tout petit décalage pour éviter le
-    // z-fighting entre les deux faces du dessus.
-    insetMesh.position.y = topY + 0.01;
+    // comme le rebord (offset plus grand que le rebord : voir polygonOffset
+    // ci-dessus, l'incrustation doit rester au-dessus du rebord aussi).
+    insetMesh.position.y = topY + 0.04;
     insetMesh.receiveShadow = true;
     group.add(insetMesh);
   } else {
@@ -3720,7 +3736,7 @@ function buildRoofCap(points, topY, editing, noInset){
     const fullGeo = new THREE.ShapeGeometry(fullShape);
     fullGeo.rotateX(-Math.PI/2);
     const fullMesh = new THREE.Mesh(fullGeo, rimMat);
-    fullMesh.position.y = topY + 0.005;
+    fullMesh.position.y = topY + 0.02;
     fullMesh.receiveShadow = true;
     group.add(fullMesh);
   }
