@@ -2065,8 +2065,15 @@ function loadGlobalGlbIfNeeded(cb, silent){
 }
 // Chargement automatique au démarrage : la globale est la maquette de base,
 // visible en permanence ; place_de_milan.glb reste chargée par-dessus.
+// trees.json est chargé APRÈS elle (dans son callback, pas en parallèle) :
+// le placement au sol de chaque arbre de scène (voir Trees.loadSceneTreesFromJSON)
+// mesure la hauteur du terrain par un rayon vertical sur globalRoot, qui doit
+// donc déjà avoir sa géométrie en place.
 function loadGlobalBase(){
-  loadGlobalGlbIfNeeded((ok)=>{ if(ok) globalRoot.visible = true; }, true);
+  loadGlobalGlbIfNeeded((ok)=>{
+    if(ok) globalRoot.visible = true;
+    tryAutoLoadTrees();
+  }, true);
 }
 // Recule/hausse la caméra pour cadrer l'ensemble de la maquette globale
 // (englobe aussi le site de base + nouveaux bâtiments, tous sous worldRoot,
@@ -4141,7 +4148,7 @@ function updateSiteStats(){
   if(!builtEl || !greenEl || !treeEl) return;
   const parcelArea = buildZone.length>=3 ? polygonAreaXZ(buildZone) : 0;
   if(parcelArea<=0){
-    builtEl.textContent = '—'; greenEl.textContent = '—'; treeEl.textContent = `${Trees.trees.length}`;
+    builtEl.textContent = '—'; greenEl.textContent = '—'; treeEl.textContent = `${Trees.plantedCount()}`;
     if(builtBar) builtBar.style.width = '0%';
     if(greenBar) greenBar.style.width = '0%';
     return;
@@ -4150,7 +4157,7 @@ function updateSiteStats(){
   const greenPct = (Grass.computeGrassAreaM2() / parcelArea) * 100;
   builtEl.textContent = `${builtPct.toFixed(0)} %`;
   greenEl.textContent = `${greenPct.toFixed(0)} %`;
-  treeEl.textContent = `${Trees.trees.length}`;
+  treeEl.textContent = `${Trees.plantedCount()}`;
   // Jauges graphiques (point 6) : simple barre de remplissage, bornée à 100%
   // par sécurité d'affichage même si le ratio calculé dépasse légèrement
   // (chevauchements de polygones, arrondis...).
@@ -8194,6 +8201,36 @@ function tryAutoLoadRoutes(){
     importRoutesFromJSON(data, `${ROUTES_JSON_URL} (auto)`, true);
   }).catch(()=>{
     // silencieux : routes.json est optionnel, l'utilisateur peut toujours le charger à la main
+  });
+}
+
+// Charge automatiquement trees.json s'il est présent à côté de index.html —
+// arbres "de scène" en masse (voir l'en-tête de src/trees.js), rendus en
+// InstancedMesh, PAS le petit nombre d'arbres "plantés" de depart.json.
+// Format : [{"x":..,"z":..}, ...] — généré par blender/export_trees_json.py.
+// Optionnel et silencieux, comme routes.json/depart.json.
+const TREES_JSON_URL = './trees.json';
+function tryAutoLoadTrees(){
+  fetch(TREES_JSON_URL).then(r=>{
+    if(!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }).then(data=>{
+    const list = Array.isArray(data) ? data : (data && data.trees) || [];
+    if(!list.length) return;
+    // Un import en masse fait un rayon vertical par arbre (mesure du sol) :
+    // potentiellement plusieurs secondes pour un très grand nombre d'arbres,
+    // bloquant (JS mono-thread) — même enveloppe "spinner" que les autres
+    // opérations lourdes (bascule jour/nuit) pour que la page n'ait pas l'air
+    // figée pendant ce chargement ponctuel. runWithSpinner est défini plus
+    // bas dans ce fichier mais déjà utilisable ici : cette fonction n'est
+    // elle-même appelée que depuis un callback asynchrone (chargement de
+    // global.glb), donc après que le script ait fini son évaluation initiale.
+    runWithSpinner(()=>{
+      const added = Trees.loadSceneTreesFromJSON(list);
+      if(added) console.info(`[Place de Milan] ${TREES_JSON_URL} : ${added} arbre(s) de scène chargé(s).`);
+    });
+  }).catch(()=>{
+    // silencieux : trees.json est optionnel, l'absence du fichier ne doit pas bloquer la page
   });
 }
 
