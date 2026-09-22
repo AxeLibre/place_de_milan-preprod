@@ -148,6 +148,20 @@ function buildTreePool(){
     // (setTreesOverlapWarning) peut la remplacer par un rouge plein, comme
     // avant (identique à l'ancien m.color.setHex() par arbre).
     if(mat.color) mat.color.set(0xffffff);
+    // BUG CORRIGÉ (constaté : arbres colorés une fraction de seconde au
+    // chargement, puis blancs) : `srcMat` est le matériau "tronc"/"feuillage"
+    // du gabarit dans la maquette — déjà passé par simplifyGroundMaterials()
+    // (index.html), qui pose `userData.simplifiedFrom` pour être repéré par
+    // applyGroundAmbient() (lueur ambiante de compensation, recalculée à
+    // chaque bascule jour/nuit). `.clone()` copie CE userData tel quel : nos
+    // clones héritaient donc du marqueur, et applyGroundAmbient() leur
+    // appliquait `emissive = color × k` — sur NOTRE `color` volontairement
+    // BLANCHE (voir ci-dessus), ce qui les recouvrait d'une lueur blanche dès
+    // le premier passage jour/nuit (juste après global.glb, d'où le "blanc
+    // après une fraction de seconde"). On efface ce marqueur hérité : les
+    // arbres reçoivent leur propre lueur ambiante ci-dessous (applyTreeAmbient),
+    // calculée sur leur VRAIE teinte (baseColor), jamais sur le blanc neutre.
+    if(mat.userData) delete mat.userData.simplifiedFrom;
     // IMPORTANT : sans vertexColors=true, Three.js n'inclut PAS la
     // multiplication par instanceColor dans le fragment shader — le
     // matériau restait à sa couleur de base (blanc) quel que soit
@@ -174,11 +188,27 @@ function buildTreePool(){
     return { mesh, baseColor };
   });
   const free = []; for(let i=TREE_CAPACITY-1;i>=0;i--) free.push(i);
+  applyTreeAmbient(_lastIsNight); // état jour/nuit courant, pas d'attente du prochain basculement
   return { parts, free, hi:0 };
 }
 function ensureTreePool(){
   if(!treePool) treePool = buildTreePool();
   return treePool;
+}
+// Même compensation ambiante que le reste du sol/bâti simplifié
+// (GROUND_AMBIENT_DAY/NIGHT côté index.html), mais appliquée explicitement ici
+// sur la VRAIE teinte de chaque partie (baseColor) plutôt que sur la couleur
+// neutre blanche du matériau — voir le commentaire dans buildTreePool(). Pas
+// de variante par nom (trottoire/gazon) : un seul réglage jour/nuit pour les
+// deux parties (tronc, feuillage). Appelée une fois à la construction du pool
+// et par index.html à chaque bascule jour/nuit (voir applyGroundAmbient()).
+const TREE_AMBIENT_DAY = 0.5, TREE_AMBIENT_NIGHT = 0.03;
+let _lastIsNight = false;
+export function applyTreeAmbient(isNight){
+  _lastIsNight = !!isNight;
+  if(!treePool) return;
+  const k = isNight ? TREE_AMBIENT_NIGHT : TREE_AMBIENT_DAY;
+  treePool.parts.forEach(({mesh, baseColor})=>{ mesh.material.emissive.copy(baseColor).multiplyScalar(k); });
 }
 function bumpTreePoolCount(pool, slot){
   if(slot+1 <= pool.hi) return;
