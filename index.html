@@ -3489,7 +3489,14 @@ function simplifyGroundMaterials(root){
     o.material = Array.isArray(o.material) ? o.material.map(conv) : conv(o.material);
   });
   applyGroundAmbient();
-  Trees.applyTreeAmbient(isNight); // même compensation ambiante, sur la vraie teinte des arbres (voir trees.js)
+  // Garde défensive : si src/trees.js déployé est une version plus ancienne
+  // (désynchronisée de cet index.html, ex. upload partiel), cette fonction
+  // peut ne pas exister. Sans garde, l'exception interromprait le RESTE de
+  // la fonction appelante à ce point précis — dans refreshNightLighting()
+  // notamment, ça sauterait aussi le réglage des fenêtres/vitres/trottoirs
+  // qui suit plus bas, un seul fichier manquant ferait alors paraître toute
+  // la maquette cassée/sombre alors que seuls les arbres seraient en cause.
+  if(typeof Trees.applyTreeAmbient === 'function') Trees.applyTreeAmbient(isNight); // même compensation ambiante, sur la vraie teinte des arbres (voir trees.js)
 }
 // Force côté double sur tous les matériaux d'un sous-arbre — appelée après
 // fixProceduralMaterials() (maquette de base) et après le chargement de
@@ -6587,7 +6594,14 @@ function ensureDayVisualEnvironment(){
   siteLights.forEach(l=> l.visible = false);
   NightLights.setNightActive(false);
   applyGroundAmbient();
-  Trees.applyTreeAmbient(isNight); // même compensation ambiante, sur la vraie teinte des arbres (voir trees.js)
+  // Garde défensive : si src/trees.js déployé est une version plus ancienne
+  // (désynchronisée de cet index.html, ex. upload partiel), cette fonction
+  // peut ne pas exister. Sans garde, l'exception interromprait le RESTE de
+  // la fonction appelante à ce point précis — dans refreshNightLighting()
+  // notamment, ça sauterait aussi le réglage des fenêtres/vitres/trottoirs
+  // qui suit plus bas, un seul fichier manquant ferait alors paraître toute
+  // la maquette cassée/sombre alors que seuls les arbres seraient en cause.
+  if(typeof Trees.applyTreeAmbient === 'function') Trees.applyTreeAmbient(isNight); // même compensation ambiante, sur la vraie teinte des arbres (voir trees.js)
 }
 function ensureNightVisualEnvironment(){
   sun.visible = false;
@@ -6599,7 +6613,14 @@ function ensureNightVisualEnvironment(){
   siteLights.forEach(l=> l.visible = true);
   NightLights.setNightActive(true);
   applyGroundAmbient();
-  Trees.applyTreeAmbient(isNight); // même compensation ambiante, sur la vraie teinte des arbres (voir trees.js)
+  // Garde défensive : si src/trees.js déployé est une version plus ancienne
+  // (désynchronisée de cet index.html, ex. upload partiel), cette fonction
+  // peut ne pas exister. Sans garde, l'exception interromprait le RESTE de
+  // la fonction appelante à ce point précis — dans refreshNightLighting()
+  // notamment, ça sauterait aussi le réglage des fenêtres/vitres/trottoirs
+  // qui suit plus bas, un seul fichier manquant ferait alors paraître toute
+  // la maquette cassée/sombre alors que seuls les arbres seraient en cause.
+  if(typeof Trees.applyTreeAmbient === 'function') Trees.applyTreeAmbient(isNight); // même compensation ambiante, sur la vraie teinte des arbres (voir trees.js)
 }
 // Applique le mode Jour à une heure solaire précise (continue) — passer
 // heavy:true lors d'une entrée depuis la Nuit (reconstruit l'environnement),
@@ -6629,7 +6650,14 @@ function refreshNightLighting(){
   siteLights.forEach(l=> l.visible = isNight);
   NightLights.setNightActive(isNight);
   applyGroundAmbient();
-  Trees.applyTreeAmbient(isNight); // même compensation ambiante, sur la vraie teinte des arbres (voir trees.js)
+  // Garde défensive : si src/trees.js déployé est une version plus ancienne
+  // (désynchronisée de cet index.html, ex. upload partiel), cette fonction
+  // peut ne pas exister. Sans garde, l'exception interromprait le RESTE de
+  // la fonction appelante à ce point précis — dans refreshNightLighting()
+  // notamment, ça sauterait aussi le réglage des fenêtres/vitres/trottoirs
+  // qui suit plus bas, un seul fichier manquant ferait alors paraître toute
+  // la maquette cassée/sombre alors que seuls les arbres seraient en cause.
+  if(typeof Trees.applyTreeAmbient === 'function') Trees.applyTreeAmbient(isNight); // même compensation ambiante, sur la vraie teinte des arbres (voir trees.js)
   staticWindowMaterials.forEach(({material})=> secureNightWindowShader(material));
   glassEmissiveMaterials.forEach(m=> secureNightWindowShader(m));
   applyVehicleLightState();
@@ -7685,6 +7713,24 @@ function ensurePedestrianLod(){
     // corrigé sur le tronc des arbres, voir trees.js).
     const pedPartMat = new THREE.MeshLambertMaterial({ color:0xffffff, vertexColors:true });
     pedPartMat.customProgramCacheKey = () => 'pedLodInstanced:' + pedPartMat.uuid;
+    // Plancher émissif neutre, fixe (indépendant de instanceColor —
+    // MeshLambertMaterial n'a qu'un seul emissive PAR MATÉRIAU, pas par
+    // instance, donc impossible de le proportionner à la couleur de chaque
+    // piéton sans shader dédié). Constaté empiriquement (sonde temporaire
+    // dans la scène réelle, même position rendue plusieurs fois avec des
+    // emissive croissants) : un piéton en tenue sombre (jean foncé/noir,
+    // très représenté dans PEDESTRIAN_PANT_COLORS et
+    // PEDESTRIAN_TSHIRT_COLORS) DANS UNE ZONE SANS LUMIÈRE DIRECTE NI
+    // AMBIANTE (ombre, mode Nuit hors flaques de lumière) s'écrase en noir
+    // TOTAL (0,0,0) sans ce plancher — la maquette n'a pas de lumière
+    // ambiante globale (retirée pour la perf, seuls le soleil/les lampadaires
+    // éclairent), donc rien ne rattrape un MeshLambertMaterial non éclairé.
+    // 0x1c1c1c ne donnait que 8/255 dans ce pire cas (encore perçu comme
+    // noir) ; 0x444444 donne 49/255, clairement une silhouette sombre et non
+    // un vide noir, tout en restant négligeable dès qu'un peu de lumière
+    // (directe ou lampadaire) atteint le piéton — voir sondage ci-dessus.
+    pedPartMat.emissive.setHex(0x444444);
+    pedPartMat.emissiveIntensity = 1;
     const m = new THREE.InstancedMesh(g, pedPartMat, PED_LOD_CAPACITY);
     m.userData.role = role;
     m.castShadow = false; m.receiveShadow = false;
