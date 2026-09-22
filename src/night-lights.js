@@ -45,8 +45,12 @@ let active = false;
 let puddles = null, puddlesGlow = null, puddleIndex = new Map(), puddlesDirty = true;
 const _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _p = new THREE.Vector3(), _sc = new THREE.Vector3(), _c = new THREE.Color();
 
-// Rayon de la flaque selon la puissance de la lampe (18 → ~17 m, 60 → ~27 m).
-function puddleRadius(s){ return 5 + Math.sqrt(Math.max(1, s.intensity)) * 3.6; }
+// Rayon de la flaque selon la puissance de la lampe (18 → ~26 m, 60 → ~42 m).
+// Agrandi (était : 5 + sqrt(intensity)*3.6, soit ~17 m/~27 m) à la demande —
+// plus de trottoir couvert par la lumière PRÈS des lampadaires, plutôt que
+// d'éclaircir tout le trottoire uniformément (essayé puis abandonné, voir
+// GROUND_AMBIENT_NIGHT_BY_NAME dans index.html).
+function puddleRadius(s){ return 7 + Math.sqrt(Math.max(1, s.intensity)) * 4.5; }
 
 function makePuddleTexture(){
   // Dégradé en NIVEAUX DE GRIS opaque (et non en transparence) : la flaque est
