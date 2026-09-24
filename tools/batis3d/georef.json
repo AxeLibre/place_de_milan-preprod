@@ -1,0 +1,16 @@
+{
+  "comment": "Similitude Lambert CC46 -> repère glTF de la maquette : p = (E-E0) + i*(-(N-N0)) ; q = a*p + b ; x = Re(q), z = Im(q), y = scale*(alt - z_ref). Généré par calibrate_batis_2018.py",
+  "center_latlon": [
+    45.76211179556013,
+    4.858197572028974
+  ],
+  "E0": 1844533.5301263183,
+  "N0": 5175247.210580994,
+  "scale": 0.9817373163241604,
+  "rotation_deg": 1.393737276565562,
+  "tx": -2.911644271322435,
+  "tz": -3.7444215220110566,
+  "residual_median_m": 1.0761856438428725,
+  "z_ref": 167.8,
+  "y_offset": 0.0
+}
