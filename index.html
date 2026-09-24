@@ -143,7 +143,7 @@
       <button class="tool-btn ghost" id="btn-admin-panel" title="Options d'affichage (véhicules, piétons)"><iconify-icon icon="fluent-emoji-flat:gear" width="21" height="21"></iconify-icon><span class="tool-btn-label">Options d'affichage</span></button>
     </div>
     <div id="render-group-popout" class="ribbon-popout">
-      <button class="tool-btn ghost" id="btn-global-view" title="Vue Globale : affiche la maquette élargie (global.glb) et le bâti environnant (Bâtis 3D 2018 de la Métropole de Lyon) autour du site, éclairée en plein midi d'équinoxe, avec la même navigation libre que le mode piéton (WASD + souris). Impossible de passer sous la maquette. Échap ou le bouton en haut pour quitter."><iconify-icon icon="fluent-emoji-flat:globe-showing-europe-africa" width="21" height="21"></iconify-icon><span class="tool-btn-label">Global</span></button>
+      <button class="tool-btn ghost" id="btn-global-view" title="Vue Globale : affiche la maquette élargie (global.glb) et le quartier environnant (bâti, voirie, parcs et arbres de la Métropole de Lyon) autour du site, éclairée en plein midi d'équinoxe, avec la même navigation libre que le mode piéton (WASD + souris). Impossible de passer sous la maquette. Échap ou le bouton en haut pour quitter."><iconify-icon icon="fluent-emoji-flat:globe-showing-europe-africa" width="21" height="21"></iconify-icon><span class="tool-btn-label">Global</span></button>
       <button class="tool-btn ghost" id="btn-skyline-entry" title="Skyline : élévations orthographiques techniques (Nord/Sud/Est/Ouest) de la maquette élargie, avec graduation de hauteur. Échap ou le bouton en haut pour quitter."><iconify-icon icon="fluent-emoji-flat:cityscape" width="21" height="21"></iconify-icon><span class="tool-btn-label">Skyline</span></button>
       <button class="tool-btn ghost" id="btn-architect-mode" title="Mode Architecte : planche de nomenclature plein écran — vue d'ensemble orthogonale du polygone d'implantation (orientable N/S/E/O ou vue de haut, avec/sans labels) entourée des fiches de chaque nouveau bâtiment (élévation orthogonale, hauteur, étages, m² au sol, m² développés, m² par usage) et de l'extension gare."><iconify-icon icon="fluent-emoji-flat:straight-ruler" width="21" height="21"></iconify-icon><span class="tool-btn-label">Architecte</span></button>
     </div>
@@ -320,7 +320,7 @@
           <li><b>Voir PLU</b> : superpose le zonage réglementaire du Plan Local d'Urbanisme et de l'Habitat.</li>
           <li><b>Exporter / Sauver</b> : générez une image PNG ou sauvegardez votre projet en JSON (boutons en bas à gauche).</li>
         </ul>
-        <p style="color:var(--muted);font-size:11.5px;">Modèles 3D (bâtiments existants, véhicules, mobilier urbain…) modélisés par l'auteur sur Blender. Plan de base et zonage PLU issus du site du PLUH du Grand Lyon : <a href="https://pluh.grandlyon.com/index" target="_blank" rel="noopener" style="color:var(--accent);">pluh.grandlyon.com</a>. Bâti environnant : « Bâtis 3D 2018 de la Métropole de Lyon », Métropole de Lyon, <a href="https://data.grandlyon.com/portail/fr/jeux-de-donnees/batis-3d-2018-de-la-metropole-de-lyon/info" target="_blank" rel="noopener" style="color:var(--accent);">data.grandlyon.com</a> (Licence Ouverte Etalab 2.0).</p>
+        <p style="color:var(--muted);font-size:11.5px;">Modèles 3D (bâtiments existants, véhicules, mobilier urbain…) modélisés par l'auteur sur Blender. Plan de base et zonage PLU issus du site du PLUH du Grand Lyon : <a href="https://pluh.grandlyon.com/index" target="_blank" rel="noopener" style="color:var(--accent);">pluh.grandlyon.com</a>. Bâti environnant : « Bâtis 3D 2018 de la Métropole de Lyon », Métropole de Lyon, <a href="https://data.grandlyon.com/portail/fr/jeux-de-donnees/batis-3d-2018-de-la-metropole-de-lyon/info" target="_blank" rel="noopener" style="color:var(--accent);">data.grandlyon.com</a> ; voirie, parcs et arbres alentour : « Chaussées et trottoirs », « Parcs et jardins » et « Arbres d'alignement » de la Métropole de Lyon, même source (Licence Ouverte Etalab 2.0).</p>
       </div>
     </div>
     <div id="label-edit-overlay">
@@ -2099,52 +2099,71 @@ function loadGlobalBase(){
   loadGlobalGlbIfNeeded((ok)=>{
     if(ok) globalRoot.visible = true;
     tryAutoLoadTrees();
-    loadBatis2018(); // bâti de contexte tout autour, une fois la globale en place
+    loadContexte(); // bâti, voirie, parcs, arbres, lampes et voies de contexte tout autour, une fois la globale en place
   }, true);
 }
 
 /* ------------------------------------------------------------
-   BÂTI DE CONTEXTE — « Bâtis 3D 2018 de la Métropole de Lyon »
-   (data.grandlyon.com, Licence Ouverte Etalab 2.0)
-   ------------------------------------------------------------
-   batis_2018.glb est généré hors ligne par tools/batis3d/build_batis_2018.py :
-   bâtiments réels dans un disque de 1,5 km autour de la place, calés sur le
-   repère de global.glb, d'où sont DÉJÀ retirés ceux qui tombent dans le
-   polygone d'implantation ou dans l'emprise de place_de_milan.glb /
-   global.glb (qui restent la maquette de référence : sol, voirie, gare,
-   objets nommés...). Il complète donc la maquette sans jamais la recouvrir.
-   - enfant de globalRoot : suit exactement sa visibilité (Vue Globale,
-     mode Architecte qui masque la globale, etc.) ;
-   - mêmes matériaux de base que global.glb ("BATIMENTS_fenetre" pour les
-     façades, avec les mêmes fenêtres allumées la nuit, "TROTTOIRE" pour le
-     sol ; toits "BATIS_TOIT" de la teinte de "BATIMENTS"), mais en éclairage
-     simple (Lambert, comme le sol de la maquette — voir toLambert) et en
-     simple face : ce bâti couvre souvent tout l'écran, un rendu PBR double
-     face y coûtait ~40 % de temps d'image en plus, pour un gain visuel nul à
-     cette distance ;
+   CONTEXTE AUTOUR DE LA MAQUETTE — données data.grandlyon.com (Licence
+   Ouverte Etalab 2.0), générées hors ligne par tools/batis3d/ :
+     - batis_2018.glb      « Bâtis 3D 2018 de la Métropole de Lyon »
+                           (build_batis_2018.py) ;
+     - voirie_parcs.glb    sol "TROTTOIRE", chaussées "ROUTE" à leur largeur
+                           réelle, parcs "gazon", passages piétons "ppy"
+                           (build_voirie_parcs.py, « Chaussées et trottoirs »
+                           + « Parcs et jardins ») ;
+     - lampadaires_contexte.json, arbres_contexte.json, routes_contexte.json
+                           (même script) : lampes de nuit, arbres de scène et
+                           voies animées (voitures, piétons).
+   Tout est dans un disque de 1,5 km autour de la place, calé sur le repère
+   de global.glb, et DÉJÀ privé de ce qui tombe dans le polygone
+   d'implantation ou dans l'emprise de place_de_milan.glb / global.glb (qui
+   restent la maquette de référence). Il complète donc la maquette sans
+   jamais la recouvrir.
+   - contexteRoot est enfant de globalRoot : suit exactement sa visibilité
+     (Vue Globale, mode Architecte qui masque la globale, etc.) ;
+   - bâti : mêmes matériaux de base que global.glb ("BATIMENTS_fenetre"
+     pour les façades, avec les mêmes fenêtres allumées la nuit ; toits
+     "BATIS_TOIT" de la teinte de "BATIMENTS"), mais en éclairage simple
+     (Lambert, comme le sol de la maquette — voir toLambert) et en simple
+     face : ce bâti couvre souvent tout l'écran, un rendu PBR double face y
+     coûtait ~40 % de temps d'image en plus, pour un gain visuel nul à cette
+     distance ;
+   - voirie/parcs : ce sont LES MATÉRIAUX MÊMES de la maquette ("ROUTE",
+     "TROTTOIRE", "gazon" de global.glb, "ppy" de place_de_milan.glb) qui
+     sont appliqués — rendu strictement identique ;
+   - lampadaires : flaques de lumière seules, comme les "global_light" de
+     global.glb (voir collectGlobalLights) ;
    - pur décor : jamais cible d'un raycast (placement d'arbres, mesure du
      sol, survol...) et exclu des cadrages automatiques (excludeFromFraming,
      voir framingBox()).
-   Fichier optionnel : son absence ne change rien au reste de la page.
+   Chaque fichier est optionnel : son absence ne change rien au reste.
    ------------------------------------------------------------ */
 const BATIS_GLB_URL = './batis_2018.glb';
-let batisRoot = null;
-function loadBatis2018(){
-  if(batisRoot) return;
-  batisRoot = new THREE.Group();
-  batisRoot.name = 'batisRoot';
-  batisRoot.userData.excludeFromFraming = true;
-  globalRoot.add(batisRoot);
+const VOIRIE_GLB_URL = './voirie_parcs.glb';
+const CONTEXTE_LAMPS_URL = './lampadaires_contexte.json';
+const CONTEXTE_TREES_URL = './arbres_contexte.json';
+const CONTEXTE_ROUTES_URL = './routes_contexte.json';
+let contexteRoot = null;
+function prepareContextScene(gltf){
+  gltf.scene.traverse(o=>{
+    if(!o.isMesh) return;
+    o.raycast = ()=>{};          // décor : ignoré par tous les raycasts
+    o.matrixAutoUpdate = false;  // tuiles statiques
+    o.updateMatrix();
+  });
+  contexteRoot.add(gltf.scene);
+  return (gltf.parser.json.scenes[0] || {}).extras || {};
+}
+function loadContexte(){
+  if(contexteRoot) return;
+  contexteRoot = new THREE.Group();
+  contexteRoot.name = 'contexteRoot';
+  contexteRoot.userData.excludeFromFraming = true;
+  globalRoot.add(contexteRoot);
+
   gltfLoader.load(BATIS_GLB_URL, (gltf)=>{
-    gltf.scene.traverse(o=>{
-      if(!o.isMesh) return;
-      o.raycast = ()=>{};          // décor : ignoré par tous les raycasts
-      o.castShadow = true;
-      o.receiveShadow = true;
-      o.matrixAutoUpdate = false;  // tuiles statiques
-      o.updateMatrix();
-    });
-    batisRoot.add(gltf.scene);
+    const info = prepareContextScene(gltf);
     const converted = new Map();
     const convert = m=>{
       if(!converted.has(m)){
@@ -2156,21 +2175,60 @@ function loadBatis2018(){
       }
       return converted.get(m);
     };
-    batisRoot.traverse(o=>{ if(o.isMesh) o.material = convert(o.material); });
+    gltf.scene.traverse(o=>{ if(o.isMesh){ o.castShadow = true; o.receiveShadow = true; o.material = convert(o.material); } });
     applyGroundAmbient();
     applyStaticWindowEmissive();
-    if(globalViewActive) applyHeightFog(batisRoot);
-    const info = (gltf.parser.json.scenes[0] || {}).extras || {};
+    if(globalViewActive) applyHeightFog(contexteRoot);
     console.info(`[Place de Milan] Bâti de contexte chargé (${BATIS_GLB_URL}) : ${info.volumes || '?'} volumes — ${info.source || ''}`);
   }, undefined, (err)=>{
     console.info(`[Place de Milan] ${BATIS_GLB_URL} absent ou illisible — bâti de contexte non affiché.`, err);
   });
+
+  gltfLoader.load(VOIRIE_GLB_URL, (gltf)=>{
+    prepareContextScene(gltf);
+    // Matériaux de la maquette elle-même (déjà préparés : Lambert, ambiante,
+    // brouillard...) : "ppy" vit dans place_de_milan.glb, le reste dans global.glb.
+    const own = new Map();
+    const pick = m=>{
+      if(!own.has(m)){
+        const ref = findMaterialByName(/^ppy$/i.test(m.name||'') ? siteRoot : globalRoot, m.name);
+        own.set(m, ref && ref !== m ? ref : m);
+      }
+      return own.get(m);
+    };
+    gltf.scene.traverse(o=>{ if(o.isMesh){ o.receiveShadow = true; o.castShadow = false; o.material = pick(o.material); } });
+    simplifyGroundMaterials(gltf.scene); // repli si un matériau de la maquette manquait
+    if(globalViewActive) applyHeightFog(contexteRoot);
+    console.info(`[Place de Milan] Voirie et parcs de contexte chargés (${VOIRIE_GLB_URL}).`);
+  }, undefined, ()=>{
+    console.info(`[Place de Milan] ${VOIRIE_GLB_URL} absent — voirie de contexte non affichée.`);
+  });
+
+  fetch(CONTEXTE_LAMPS_URL).then(r=> r.ok ? r.json() : Promise.reject(r.status)).then(list=>{
+    NightLights.unregisterSourcesWithPrefix('ctx:');
+    list.forEach(([x, y, z], i)=>{
+      // mêmes réglages que les "global_light" de global.glb : flaque seule, lampe à 5,6 m du sol
+      NightLights.registerSource('ctx:' + i, new THREE.Vector3(x, y, z), { color:0xffd17c, intensity:18, groundY:y - 5.6, lodOnly:true });
+    });
+    console.info(`[Place de Milan] ${CONTEXTE_LAMPS_URL} : ${list.length} lampadaire(s) de contexte.`);
+  }).catch(()=>{});
+
+  fetch(CONTEXTE_TREES_URL).then(r=> r.ok ? r.json() : Promise.reject(r.status)).then(list=>{
+    const added = Trees.loadSceneTreesFromJSON(list); // altitude fournie : aucun rayon de mesure
+    console.info(`[Place de Milan] ${CONTEXTE_TREES_URL} : ${added} arbre(s) de contexte.`);
+  }).catch(()=>{});
+
+  // Après routes.json, qui REMPLACE l'ensemble des voies : sinon il effacerait
+  // celles du contexte s'il arrivait en second.
+  routesJsonLoaded.then(()=> fetch(CONTEXTE_ROUTES_URL)).then(r=> r.ok ? r.json() : Promise.reject(r.status)).then(data=>{
+    importRoutesFromJSON(data, CONTEXTE_ROUTES_URL, true, { append:true });
+  }).catch(()=>{});
 }
 // Recule/hausse la caméra pour cadrer l'ensemble de la maquette globale
 // (englobe aussi le site de base + nouveaux bâtiments, tous sous worldRoot,
 // pour que le cadrage tienne compte de tout ce qui est visible ensemble).
 // Le bâti de contexte Bâtis 3D 2018 (disque de 3 km) est exclu du cadrage :
-// voir framingBox() et loadBatis2018().
+// voir framingBox() et loadContexte().
 function frameCameraOnGlobalModel(){
   const box = framingBox(THREE, worldRoot);
   if(box.isEmpty()) return 60;
@@ -3606,7 +3664,7 @@ function simplifyGroundMaterials(root){
 // Exception : les matériaux marqués `userData.frontSideOnly` (bâti de contexte
 // Bâtis 3D 2018, volumes fermés et correctement orientés) restent en simple
 // face — les faces arrière de ~120 000 murs coûtaient ~15 % du temps d'image
-// pour rien (voir loadBatis2018).
+// pour rien (voir loadContexte).
 function forceDoubleSided(root){
   root.traverse(o=>{
     if(!o.isMesh || !o.material) return;
@@ -8217,8 +8275,10 @@ renderUsageColorControls();
 // `silent=true` (utilisé pour l'auto-chargement au démarrage de la page) : le
 // résultat part uniquement dans la console, pas de bannière — elle n'a de sens
 // que pour un import déclenché volontairement (bouton "Charger routes.json").
-function importRoutesFromJSON(data, sourceLabel, silent=false){
-  clearRoutes(); // routes.json remplace l'ensemble des voies existantes (évite les doublons avec l'import auto depuis le .glb)
+// `opts.append` : ajoute aux voies existantes au lieu de les remplacer
+// (routes_contexte.json, voir loadContexte).
+function importRoutesFromJSON(data, sourceLabel, silent=false, opts={}){
+  if(!opts.append) clearRoutes(); // routes.json remplace l'ensemble des voies existantes (évite les doublons avec l'import auto depuis le .glb)
   const empty = [], created = [];
   Object.entries(data).forEach(([name, pts])=>{
     if(!pts || pts.length<2){ empty.push(name); return; }
@@ -8262,6 +8322,9 @@ if(fileRoutes){
 // Charge automatiquement routes.json s'il est présent à côté de index.html,
 // exactement comme place_de_milan.glb — pas besoin de cliquer manuellement.
 const ROUTES_JSON_URL = './routes.json';
+// Résolue une fois routes.json traité (chargé ou absent) — voir loadContexte.
+let resolveRoutesJsonLoaded;
+const routesJsonLoaded = new Promise(res=>{ resolveRoutesJsonLoaded = res; });
 function tryAutoLoadRoutes(){
   fetch(ROUTES_JSON_URL).then(r=>{
     if(!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -8270,7 +8333,7 @@ function tryAutoLoadRoutes(){
     importRoutesFromJSON(data, `${ROUTES_JSON_URL} (auto)`, true);
   }).catch(()=>{
     // silencieux : routes.json est optionnel, l'utilisateur peut toujours le charger à la main
-  });
+  }).finally(()=> resolveRoutesJsonLoaded());
 }
 
 // Charge automatiquement trees.json s'il est présent à côté de index.html —
