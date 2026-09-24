@@ -143,7 +143,7 @@
       <button class="tool-btn ghost" id="btn-admin-panel" title="Options d'affichage (véhicules, piétons)"><iconify-icon icon="fluent-emoji-flat:gear" width="21" height="21"></iconify-icon><span class="tool-btn-label">Options d'affichage</span></button>
     </div>
     <div id="render-group-popout" class="ribbon-popout">
-      <button class="tool-btn ghost" id="btn-global-view" title="Vue Globale : affiche la maquette élargie (global.glb) autour du site, éclairée en plein midi d'équinoxe, avec la même navigation libre que le mode piéton (WASD + souris). Impossible de passer sous la maquette. Échap ou le bouton en haut pour quitter."><iconify-icon icon="fluent-emoji-flat:globe-showing-europe-africa" width="21" height="21"></iconify-icon><span class="tool-btn-label">Global</span></button>
+      <button class="tool-btn ghost" id="btn-global-view" title="Vue Globale : affiche la maquette élargie (global.glb) et le bâti environnant (Bâtis 3D 2018 de la Métropole de Lyon) autour du site, éclairée en plein midi d'équinoxe, avec la même navigation libre que le mode piéton (WASD + souris). Impossible de passer sous la maquette. Échap ou le bouton en haut pour quitter."><iconify-icon icon="fluent-emoji-flat:globe-showing-europe-africa" width="21" height="21"></iconify-icon><span class="tool-btn-label">Global</span></button>
       <button class="tool-btn ghost" id="btn-skyline-entry" title="Skyline : élévations orthographiques techniques (Nord/Sud/Est/Ouest) de la maquette élargie, avec graduation de hauteur. Échap ou le bouton en haut pour quitter."><iconify-icon icon="fluent-emoji-flat:cityscape" width="21" height="21"></iconify-icon><span class="tool-btn-label">Skyline</span></button>
       <button class="tool-btn ghost" id="btn-architect-mode" title="Mode Architecte : planche de nomenclature plein écran — vue d'ensemble orthogonale du polygone d'implantation (orientable N/S/E/O ou vue de haut, avec/sans labels) entourée des fiches de chaque nouveau bâtiment (élévation orthogonale, hauteur, étages, m² au sol, m² développés, m² par usage) et de l'extension gare."><iconify-icon icon="fluent-emoji-flat:straight-ruler" width="21" height="21"></iconify-icon><span class="tool-btn-label">Architecte</span></button>
     </div>
@@ -320,7 +320,7 @@
           <li><b>Voir PLU</b> : superpose le zonage réglementaire du Plan Local d'Urbanisme et de l'Habitat.</li>
           <li><b>Exporter / Sauver</b> : générez une image PNG ou sauvegardez votre projet en JSON (boutons en bas à gauche).</li>
         </ul>
-        <p style="color:var(--muted);font-size:11.5px;">Modèles 3D (bâtiments existants, véhicules, mobilier urbain…) modélisés par l'auteur sur Blender. Plan de base et zonage PLU issus du site du PLUH du Grand Lyon : <a href="https://pluh.grandlyon.com/index" target="_blank" rel="noopener" style="color:var(--accent);">pluh.grandlyon.com</a>.</p>
+        <p style="color:var(--muted);font-size:11.5px;">Modèles 3D (bâtiments existants, véhicules, mobilier urbain…) modélisés par l'auteur sur Blender. Plan de base et zonage PLU issus du site du PLUH du Grand Lyon : <a href="https://pluh.grandlyon.com/index" target="_blank" rel="noopener" style="color:var(--accent);">pluh.grandlyon.com</a>. Bâti environnant : « Bâtis 3D 2018 de la Métropole de Lyon », Métropole de Lyon, <a href="https://data.grandlyon.com/portail/fr/jeux-de-donnees/batis-3d-2018-de-la-metropole-de-lyon/info" target="_blank" rel="noopener" style="color:var(--accent);">data.grandlyon.com</a> (Licence Ouverte Etalab 2.0).</p>
       </div>
     </div>
     <div id="label-edit-overlay">
@@ -416,7 +416,7 @@ import {
 } from './src/geometry-utils.js';
 import * as AppState from './src/state.js';
 import { dedupe, convexHullXZ } from './src/geometry-utils.js';
-import { findByNameCI, findAllByNameCI } from './src/scene-utils.js';
+import { findByNameCI, findAllByNameCI, framingBox } from './src/scene-utils.js';
 import { NEON_BLUE, NEON_BLUE_CSS, FLOOR_HEIGHT, FLOOR_HEIGHTS, USAGE_COLORS, USAGE_LABELS, DEFAULT_USAGE } from './src/config.js';
 import { floorHeightFor, usageAtFloor, footprintForBand, buildingTotalHeight, buildingTotalFloorArea } from './src/building-utils.js';
 // Le "?v=2" force le navigateur (et le CDN GitHub Pages) à voir ce fichier
@@ -439,6 +439,7 @@ import * as DrawTool from './src/draw-tool.js';
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/addons/libs/meshopt_decoder.module.js";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import { mergeVertices, mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { Line2 } from "three/addons/lines/Line2.js";
@@ -1183,19 +1184,20 @@ function applyStaticWindowEmissive(){
 // shaders que le bâti de place_de_milan (voir makeStaticNightWindowMaterial),
 // ajoutés à staticWindowMaterials SANS le réinitialiser (setupStaticWindowMaterials
 // repart de zéro pour place_de_milan). Les noms sont ceux de global.glb.
+const GLOBAL_GLASS_WINDOWS = { pitch:1, floorH:3, winW:0.72, winH:1.5, litProb:1.0, color:[1.0,0.86,0.58] };
+const GLOBAL_WINDOW_SPECS = { // clés en minuscules (comparaison insensible à la casse)
+  'glass':             { ...GLOBAL_GLASS_WINDOWS, facadeGlow:true },
+  'glass.001':         { pitch:1, floorH:3,   winW:0.65, winH:1.3,  litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.86,0.58] },
+  'glass_fenetre':     { pitch:1, floorH:3,   winW:0.65, winH:1.3,  litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.86,0.58] },
+  'batiments_fenetre': { pitch:2, floorH:2.5, winW:0.65, winH:0.85, litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.82,0.5], facadeGlow:true },
+  'glass_carre':       { pitch:3, floorH:3,   winW:2.5,  winH:2.5,  litProb:1.0, color:[1.0,1.0,1.0] },
+  // Tours "Crayon" et "To-Lyon" : mêmes fenêtres que "glass" ; "tolyon" alterne
+  // 6 étages allumés puis 6 éteints en partant du sol.
+  'crayon':            { ...GLOBAL_GLASS_WINDOWS },
+  'tolyon':            { ...GLOBAL_GLASS_WINDOWS, floorBlock:6 },
+};
 function setupGlobalWindowMaterials(root){
-  const GLASS = { pitch:1, floorH:3, winW:0.72, winH:1.5, litProb:1.0, color:[1.0,0.86,0.58] };
-  const specs = { // clés en minuscules (comparaison insensible à la casse)
-    'glass':             { ...GLASS, facadeGlow:true },
-    'glass.001':         { pitch:1, floorH:3,   winW:0.65, winH:1.3,  litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.86,0.58] },
-    'glass_fenetre':     { pitch:1, floorH:3,   winW:0.65, winH:1.3,  litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.86,0.58] },
-    'batiments_fenetre': { pitch:2, floorH:2.5, winW:0.65, winH:0.85, litProb:GLASS_WINDOW_LIT_PROB, color:[1.0,0.82,0.5], facadeGlow:true },
-    'glass_carre':       { pitch:3, floorH:3,   winW:2.5,  winH:2.5,  litProb:1.0, color:[1.0,1.0,1.0] },
-    // Tours "Crayon" et "To-Lyon" : mêmes fenêtres que "glass" ; "tolyon" alterne
-    // 6 étages allumés puis 6 éteints en partant du sol.
-    'crayon':            { ...GLASS },
-    'tolyon':            { ...GLASS, floorBlock:6 },
-  };
+  const specs = GLOBAL_WINDOW_SPECS;
   const bySpec = {}; // nom -> [matériaux d'origine]
   root.traverse(o=>{
     if(!o.isMesh) return;
@@ -2097,13 +2099,80 @@ function loadGlobalBase(){
   loadGlobalGlbIfNeeded((ok)=>{
     if(ok) globalRoot.visible = true;
     tryAutoLoadTrees();
+    loadBatis2018(); // bâti de contexte tout autour, une fois la globale en place
   }, true);
+}
+
+/* ------------------------------------------------------------
+   BÂTI DE CONTEXTE — « Bâtis 3D 2018 de la Métropole de Lyon »
+   (data.grandlyon.com, Licence Ouverte Etalab 2.0)
+   ------------------------------------------------------------
+   batis_2018.glb est généré hors ligne par tools/batis3d/build_batis_2018.py :
+   bâtiments réels dans un disque de 1,5 km autour de la place, calés sur le
+   repère de global.glb, d'où sont DÉJÀ retirés ceux qui tombent dans le
+   polygone d'implantation ou dans l'emprise de place_de_milan.glb /
+   global.glb (qui restent la maquette de référence : sol, voirie, gare,
+   objets nommés...). Il complète donc la maquette sans jamais la recouvrir.
+   - enfant de globalRoot : suit exactement sa visibilité (Vue Globale,
+     mode Architecte qui masque la globale, etc.) ;
+   - mêmes matériaux de base que global.glb ("BATIMENTS_fenetre" pour les
+     façades, avec les mêmes fenêtres allumées la nuit, "TROTTOIRE" pour le
+     sol ; toits "BATIS_TOIT" de la teinte de "BATIMENTS"), mais en éclairage
+     simple (Lambert, comme le sol de la maquette — voir toLambert) et en
+     simple face : ce bâti couvre souvent tout l'écran, un rendu PBR double
+     face y coûtait ~40 % de temps d'image en plus, pour un gain visuel nul à
+     cette distance ;
+   - pur décor : jamais cible d'un raycast (placement d'arbres, mesure du
+     sol, survol...) et exclu des cadrages automatiques (excludeFromFraming,
+     voir framingBox()).
+   Fichier optionnel : son absence ne change rien au reste de la page.
+   ------------------------------------------------------------ */
+const BATIS_GLB_URL = './batis_2018.glb';
+let batisRoot = null;
+function loadBatis2018(){
+  if(batisRoot) return;
+  batisRoot = new THREE.Group();
+  batisRoot.name = 'batisRoot';
+  batisRoot.userData.excludeFromFraming = true;
+  globalRoot.add(batisRoot);
+  gltfLoader.load(BATIS_GLB_URL, (gltf)=>{
+    gltf.scene.traverse(o=>{
+      if(!o.isMesh) return;
+      o.raycast = ()=>{};          // décor : ignoré par tous les raycasts
+      o.castShadow = true;
+      o.receiveShadow = true;
+      o.matrixAutoUpdate = false;  // tuiles statiques
+      o.updateMatrix();
+    });
+    batisRoot.add(gltf.scene);
+    const converted = new Map();
+    const convert = m=>{
+      if(!converted.has(m)){
+        let c = toLambert(m); // + compensation ambiante jour/nuit (applyGroundAmbient)
+        c.side = THREE.FrontSide;
+        c.userData.frontSideOnly = true;
+        if(/^batiments_fenetre$/i.test(m.name||'')) c = makeStaticNightWindowMaterial(c, GLOBAL_WINDOW_SPECS['batiments_fenetre']);
+        converted.set(m, c);
+      }
+      return converted.get(m);
+    };
+    batisRoot.traverse(o=>{ if(o.isMesh) o.material = convert(o.material); });
+    applyGroundAmbient();
+    applyStaticWindowEmissive();
+    if(globalViewActive) applyHeightFog(batisRoot);
+    const info = (gltf.parser.json.scenes[0] || {}).extras || {};
+    console.info(`[Place de Milan] Bâti de contexte chargé (${BATIS_GLB_URL}) : ${info.volumes || '?'} volumes — ${info.source || ''}`);
+  }, undefined, (err)=>{
+    console.info(`[Place de Milan] ${BATIS_GLB_URL} absent ou illisible — bâti de contexte non affiché.`, err);
+  });
 }
 // Recule/hausse la caméra pour cadrer l'ensemble de la maquette globale
 // (englobe aussi le site de base + nouveaux bâtiments, tous sous worldRoot,
 // pour que le cadrage tienne compte de tout ce qui est visible ensemble).
+// Le bâti de contexte Bâtis 3D 2018 (disque de 3 km) est exclu du cadrage :
+// voir framingBox() et loadBatis2018().
 function frameCameraOnGlobalModel(){
-  const box = new THREE.Box3().setFromObject(worldRoot);
+  const box = framingBox(THREE, worldRoot);
   if(box.isEmpty()) return 60;
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
@@ -3126,6 +3195,7 @@ function showSiteBanner(html, ok=false){
 }
 
 const gltfLoader = new GLTFLoader();
+gltfLoader.setMeshoptDecoder(MeshoptDecoder); // batis_2018.glb est compressé (EXT_meshopt_compression) — voir tools/batis3d/
 const SITE_GLB_URL = './place_de_milan.glb'; // nom attendu à côté de ce fichier index.html
 function loadSiteFromGLB(url, onFail){
   gltfLoader.load(url, (gltf)=>{
@@ -3533,11 +3603,15 @@ function simplifyGroundMaterials(root){
 // fixProceduralMaterials() (maquette de base) et après le chargement de
 // global.glb (voir loadGlobalGlbIfNeeded), pour qu'aucune face ne devienne
 // invisible selon l'angle de vue (ex. routes vues depuis en dessous).
+// Exception : les matériaux marqués `userData.frontSideOnly` (bâti de contexte
+// Bâtis 3D 2018, volumes fermés et correctement orientés) restent en simple
+// face — les faces arrière de ~120 000 murs coûtaient ~15 % du temps d'image
+// pour rien (voir loadBatis2018).
 function forceDoubleSided(root){
   root.traverse(o=>{
     if(!o.isMesh || !o.material) return;
     const mats = Array.isArray(o.material) ? o.material : [o.material];
-    mats.forEach(m=>{ if(m) m.side = THREE.DoubleSide; });
+    mats.forEach(m=>{ if(m && !(m.userData && m.userData.frontSideOnly)) m.side = THREE.DoubleSide; });
   });
 }
 
