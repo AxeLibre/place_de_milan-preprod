@@ -12,6 +12,7 @@
 
 import * as THREE from "three";
 import { camera, controls, renderer, orthoCamera, worldRoot, siteRoot, globalRoot, buildings } from './state.js';
+import { traverseFramed, framingBox } from './scene-utils.js';
 
 let exitPedestrianMode, getPedestrianModeActive;
 export function initCameraSkyline(deps){
@@ -61,7 +62,7 @@ function collectSkylineMeshes(){
   const roots = [siteRoot, globalRoot, ...buildings.map(b=>b.group)];
   roots.forEach(root=>{
     if(!root) return;
-    root.traverse(o=>{
+    traverseFramed(root, o=>{ // sans le bâti de contexte (Bâtis 3D 2018) : il masquerait tout le quartier
       if(o.isMesh && o.visible && o.geometry && !SKYLINE_EXCLUDE_NAME_RE.test(o.name||'')){
         meshes.push(o);
       }
@@ -238,7 +239,7 @@ const skylineFrameCenter = new THREE.Vector3();
 // intervalle near/far serré pour rester précise (une plage near/far trop
 // large "écrase" la précision de la texture de profondeur).
 export function frameOrthoOnSkyline(dir){
-  const box = new THREE.Box3().setFromObject(worldRoot);
+  const box = framingBox(THREE, worldRoot);
   if(box.isEmpty()) return;
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
@@ -313,7 +314,7 @@ skylineModeBar.querySelectorAll('button').forEach(btn=>{
 // paramètres) pour être réutilisable telle quelle par l'export PNG.
 export function drawSkylineRulerOn(ctx, w, h, scale){
   scale = scale || 1;
-  const box = new THREE.Box3().setFromObject(worldRoot);
+  const box = framingBox(THREE, worldRoot);
   if(box.isEmpty()) return;
   const hMin = Math.floor(box.min.y/10)*10 - 10;
   const hMax = Math.ceil(box.max.y/10)*10 + 10;
