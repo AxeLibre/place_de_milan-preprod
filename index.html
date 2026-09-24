@@ -2122,13 +2122,10 @@ function loadGlobalBase(){
    jamais la recouvrir.
    - contexteRoot est enfant de globalRoot : suit exactement sa visibilité
      (Vue Globale, mode Architecte qui masque la globale, etc.) ;
-   - bâti : mêmes matériaux de base que global.glb ("BATIMENTS_fenetre"
-     pour les façades, avec les mêmes fenêtres allumées la nuit ; toits
-     "BATIS_TOIT" de la teinte de "BATIMENTS"), mais en éclairage simple
-     (Lambert, comme le sol de la maquette — voir toLambert) et en simple
-     face : ce bâti couvre souvent tout l'écran, un rendu PBR double face y
-     coûtait ~40 % de temps d'image en plus, pour un gain visuel nul à cette
-     distance ;
+   - bâti : même matériau que "BATIMENTS" de global.glb (façades avec les
+     mêmes fenêtres allumées la nuit ; toits "BATIS_TOIT" identiques), mais
+     en simple face : volumes fermés, et les faces arrière de ~120 000 murs
+     coûtaient ~15 % de temps d'image pour rien ;
    - voirie/parcs : ce sont LES MATÉRIAUX MÊMES de la maquette ("ROUTE",
      "TROTTOIRE", "gazon" de global.glb, "ppy" de place_de_milan.glb) qui
      sont appliqués — rendu strictement identique ;
@@ -2144,6 +2141,10 @@ const VOIRIE_GLB_URL = './voirie_parcs.glb';
 const CONTEXTE_LAMPS_URL = './lampadaires_contexte.json';
 const CONTEXTE_TREES_URL = './arbres_contexte.json';
 const CONTEXTE_ROUTES_URL = './routes_contexte.json';
+// Voies de contexte (souvent 3-4 km) : un agent tous les N mètres de voie,
+// plutôt que le nombre fixe de ROUTE_TYPES (~540 voitures et ~590 piétons au
+// total ; les itinéraires se superposent sur les grands axes près du site).
+const CONTEXTE_ROUTE_SPACING = { voiture:250, pieton:230 };
 let contexteRoot = null;
 function prepareContextScene(gltf){
   gltf.scene.traverse(o=>{
@@ -2164,10 +2165,16 @@ function loadContexte(){
 
   gltfLoader.load(BATIS_GLB_URL, (gltf)=>{
     const info = prepareContextScene(gltf);
+    // Même matériau PBR que "BATIMENTS" de global.glb (couleur, métal,
+    // rugosité identiques, écrits par build_batis_2018.py) : même teinte que
+    // le reste de la maquette sous tous les éclairages. Seule différence :
+    // simple face (volumes fermés), bien moins coûteux sur ~120 000 murs.
+    const ref = findMaterialByName(globalRoot, 'BATIMENTS');
     const converted = new Map();
     const convert = m=>{
       if(!converted.has(m)){
-        let c = toLambert(m); // + compensation ambiante jour/nuit (applyGroundAmbient)
+        let c = m.clone();
+        if(ref && ref.color && c.color){ c.color.copy(ref.color); c.metalness = ref.metalness; c.roughness = ref.roughness; }
         c.side = THREE.FrontSide;
         c.userData.frontSideOnly = true;
         if(/^batiments_fenetre$/i.test(m.name||'')) c = makeStaticNightWindowMaterial(c, GLOBAL_WINDOW_SPECS['batiments_fenetre']);
@@ -2176,7 +2183,6 @@ function loadContexte(){
       return converted.get(m);
     };
     gltf.scene.traverse(o=>{ if(o.isMesh){ o.castShadow = true; o.receiveShadow = true; o.material = convert(o.material); } });
-    applyGroundAmbient();
     applyStaticWindowEmissive();
     if(globalViewActive) applyHeightFog(contexteRoot);
     console.info(`[Place de Milan] Bâti de contexte chargé (${BATIS_GLB_URL}) : ${info.volumes || '?'} volumes — ${info.source || ''}`);
@@ -2221,7 +2227,7 @@ function loadContexte(){
   // Après routes.json, qui REMPLACE l'ensemble des voies : sinon il effacerait
   // celles du contexte s'il arrivait en second.
   routesJsonLoaded.then(()=> fetch(CONTEXTE_ROUTES_URL)).then(r=> r.ok ? r.json() : Promise.reject(r.status)).then(data=>{
-    importRoutesFromJSON(data, CONTEXTE_ROUTES_URL, true, { append:true });
+    importRoutesFromJSON(data, CONTEXTE_ROUTES_URL, true, { append:true, spacing:CONTEXTE_ROUTE_SPACING });
   }).catch(()=>{});
 }
 // Recule/hausse la caméra pour cadrer l'ensemble de la maquette globale
@@ -7334,20 +7340,25 @@ let routeIdCounter = 1;
 /* ============================================================
    ARRÊTS AUX DÉTECTEURS (Detector_Train / Detector_Tram)
    ============================================================
-   Deux volumes placés dans Blender ("Detector_Train", "Detector_Tram")
-   matérialisent une zone d'arrêt (quai). Le convoi (identifié par sa tête,
+   Des volumes placés dans Blender ("Detector_Train", "Detector_Tram",
+   "Detector_Tram_2"... : tout nom commençant ainsi) matérialisent chacun
+   une zone d'arrêt (quai). Le convoi (identifié par sa tête,
    wagonIndex 0 = pièce "avant") ralentit progressivement de moitié tant
    qu'il est dans la zone, puis freine plus fort dès qu'il en sort jusqu'à
    l'arrêt complet, patiente, puis réaccélère progressivement.
    ============================================================ */
-let detectorBoxes = { train:null, tram:null };
+let detectorBoxes = { train:[], tram:[] }; // plusieurs zones par type : Detector_Tram, Detector_Tram_2, ...
 function collectDetectorZones(){
-  detectorBoxes = { train:null, tram:null };
+  // Tout objet dont le nom COMMENCE par "Detector_Train" / "Detector_Tram"
+  // (ex. "Detector_Tram_2", ou le suffixe ".001" ajouté par Blender) marque
+  // un arrêt. Seuls les meshes comptent (pas un éventuel nœud parent vide).
+  detectorBoxes = { train:[], tram:[] };
+  siteRoot.updateMatrixWorld(true);
   siteRoot.traverse(o=>{
-    if(!o.name) return;
+    if(!o.name || !o.isMesh) return;
     const key = o.name.toLowerCase();
-    if(key==='detector_train') detectorBoxes.train = new THREE.Box3().setFromObject(o);
-    else if(key==='detector_tram') detectorBoxes.tram = new THREE.Box3().setFromObject(o);
+    if(key.startsWith('detector_train')) detectorBoxes.train.push(new THREE.Box3().setFromObject(o));
+    else if(key.startsWith('detector_tram')) detectorBoxes.tram.push(new THREE.Box3().setFromObject(o));
   });
 }
 // Durée d'arrêt au quai, par type de véhicule (secondes).
@@ -7356,11 +7367,11 @@ const DETECTOR_STOP_WAIT = { tram:2, train:4, tgv:4 };
 // (plus la constante est grande, plus la transition est rapide).
 const DETECTOR_EASE = { toHalf:1.6, toStop:3.2, toCruise:0.7, cruiseHold:1.2 };
 function updateDetectorSpeedControl(r, dt, headPos){
-  const box = detectorBoxes[r.type==='tgv' ? 'train' : r.type];
-  if(!box){ r.speedFactor = 1; return; }
+  const boxes = detectorBoxes[r.type==='tgv' ? 'train' : r.type];
+  if(!boxes || !boxes.length){ r.speedFactor = 1; return; }
   if(!r.speedCtrl) r.speedCtrl = { state:'cruise', factor:1, wasInZone:false, stopTimer:0 };
   const sc = r.speedCtrl;
-  const inZone = pointInBoxXZ(box, headPos);
+  const inZone = boxes.some(box=> pointInBoxXZ(box, headPos));
   if(inZone){
     sc.state = 'in_zone';
     sc.factor += (0.5 - sc.factor) * Math.min(1, dt*DETECTOR_EASE.toHalf);
@@ -7703,6 +7714,7 @@ function instantiateVehiclePart(cfg, wagonIndex){
     // donc au plus 7 matériaux au total quelle que soit la taille du parc.
     if(cfg===ROUTE_TYPES.voiture){
       const hex = CAR_COLOR_PALETTE[Math.floor(Math.random()*CAR_COLOR_PALETTE.length)];
+      obj.userData.carColor = hex; // reprise par la silhouette LOD (voir carLodSet)
       if(!carPaletteMaterials[hex] && vehicleBodyMaterials.voiture){
         const m = vehicleBodyMaterials.voiture.clone();
         m.color.setHex(hex);
@@ -7748,13 +7760,17 @@ function instantiateVehiclePart(cfg, wagonIndex){
 }
 ROUTE_TYPES.train._fallbackKey='train'; ROUTE_TYPES.tgv._fallbackKey='tgv'; ROUTE_TYPES.tram._fallbackKey='tram'; ROUTE_TYPES.bus._fallbackKey='bus'; ROUTE_TYPES.voiture._fallbackKey='voiture';
 
-function createRoute(points, type, name){
+// `opts.count` : nombre d'agents (sinon ROUTE_TYPES[type].count).
+function createRoute(points, type, name, opts={}){
   if(!points || points.length<2) return null; // pas assez de points pour tracer un chemin
   const cfg = ROUTE_TYPES[type] || ROUTE_TYPES.voiture;
   const vec = points.map(p=>new THREE.Vector3(p.x, p.y||0.15, p.z));
   const curve = new THREE.CatmullRomCurve3(vec, false, 'catmullrom', 0.2);
+  // Voies longues (plusieurs km) : plus de points d'échantillonnage de la
+  // longueur d'arc (200 par défaut), sinon la vitesse varie le long de la voie.
+  curve.arcLengthDivisions = Math.max(200, Math.ceil(vec.length * 4));
 
-  const count = cfg.count;
+  const count = opts.count || cfg.count;
   const wagons = cfg.wagons || 1;
   const vehicleGroup = new THREE.Group();
   worldRoot.add(vehicleGroup);
@@ -7826,7 +7842,7 @@ const PIETON_ANIM_CULL_DIST_SQ = 55*55; // (ancien seuil, conservé pour référ
 const PED_FULL_RIG_DIST = 150, PED_FULL_RIG_HYST = 15;
 const PED_FULL_RIG_DIST_SQ = PED_FULL_RIG_DIST*PED_FULL_RIG_DIST;
 const PED_FULL_RIG_FAR_SQ = (PED_FULL_RIG_DIST+PED_FULL_RIG_HYST)*(PED_FULL_RIG_DIST+PED_FULL_RIG_HYST);
-const PED_LOD_CAPACITY = 1500;
+const PED_LOD_CAPACITY = 3000; // ~310 piétons de routes.json + ~590 de routes_contexte.json, avec marge
 let pedLod = null; // { group, meshes:[legs,torso,head], free:[slots], shown:Uint8Array }
 const _pedM = new THREE.Matrix4(), _pedS = new THREE.Vector3(1,1,1), _pedZero = new THREE.Matrix4().makeScale(0,0,0);
 const _pedC = new THREE.Color();
@@ -7961,22 +7977,102 @@ function pedestrianLodRelease(agent){
 }
 function releaseRoutePedestrians(r){
   if(r && r.type === 'pieton') r.agents.forEach(pedestrianLodRelease);
+  if(r && r.type === 'voiture') r.agents.forEach(carLodRelease);
+}
+
+/* ------------------------------------------------------------
+   LOD DES VOITURES — PERFORMANCE (même principe que les piétons).
+   Une voiture de vehicules.glb = 5 maillages (+ autant dans la passe
+   d'ombre). Au-delà de CAR_FULL_DIST de la caméra, ou au-delà des
+   CAR_MAX_FULL plus proches, elle est rendue par une silhouette (caisse +
+   habitacle, à sa couleur) : 2 InstancedMesh partagés par toutes les
+   voitures lointaines, soit 2 draw calls au total.
+   ------------------------------------------------------------ */
+const CAR_FULL_DIST = 130, CAR_FULL_HYST = 15, CAR_MAX_FULL = 30, CAR_LOD_CAPACITY = 2500;
+const CAR_FULL_DIST_SQ = CAR_FULL_DIST*CAR_FULL_DIST, CAR_FULL_FAR_SQ = (CAR_FULL_DIST+CAR_FULL_HYST)*(CAR_FULL_DIST+CAR_FULL_HYST);
+let carLod = null; // { group, meshes:[caisse, habitacle], free, hi, shown }
+const _carCand = [];
+function ensureCarLod(){
+  if(carLod) return carLod;
+  // Proportions d'une citadine (le gabarit de vehicules.glb fait ~4,2 x 1,8 m) :
+  // caisse basse + habitacle en retrait, longueur selon +Z (sens de lookAt).
+  const parts = [
+    { size:[1.75, 0.75, 4.2], c:[0, 0.55, 0], tint:1.0 },
+    { size:[1.55, 0.6, 2.2],  c:[0, 1.2, -0.2], tint:0.55 }, // vitres sombres
+  ];
+  const meshes = parts.map(pt=>{
+    const g = new THREE.BoxGeometry(...pt.size);
+    g.translate(...pt.c);
+    // attribut `color` blanc : sans lui, vertexColors annule instanceColor (voir ensurePedestrianLod)
+    g.setAttribute('color', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count*3).fill(1), 3));
+    const mat = new THREE.MeshLambertMaterial({ color:0xffffff, vertexColors:true });
+    mat.customProgramCacheKey = () => 'carLodInstanced:' + mat.uuid;
+    mat.emissive.setHex(0x222222);
+    const m = new THREE.InstancedMesh(g, mat, CAR_LOD_CAPACITY);
+    m.userData.tint = pt.tint;
+    m.castShadow = false; m.receiveShadow = false;
+    m.frustumCulled = false;
+    m.count = 0;
+    for(let i=0;i<CAR_LOD_CAPACITY;i++) m.setMatrixAt(i, _pedZero);
+    m.setColorAt(0, _pedC.setHex(0x888888));
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    return m;
+  });
+  const group = new THREE.Group(); group.name = 'carLod';
+  meshes.forEach(m=> group.add(m));
+  worldRoot.add(group);
+  const free = []; for(let i=CAR_LOD_CAPACITY-1;i>=0;i--) free.push(i);
+  carLod = { group, meshes, free, hi:0, shown: new Uint8Array(CAR_LOD_CAPACITY) };
+  return carLod;
+}
+function carLodSet(slot, position, quaternion, hex){
+  _pedM.compose(position, quaternion, _pedS);
+  carLod.meshes.forEach(m=>{
+    m.setMatrixAt(slot, _pedM);
+    if(!carLod.shown[slot]){
+      m.setColorAt(slot, _pedC.setHex(hex === undefined ? 0x5a5f66 : hex).multiplyScalar(m.userData.tint));
+      m.instanceColor.needsUpdate = true;
+    }
+  });
+  carLod.shown[slot] = 1;
+}
+function carLodHide(slot){
+  if(!carLod.shown[slot]) return;
+  carLod.meshes.forEach(m=> m.setMatrixAt(slot, _pedZero));
+  carLod.shown[slot] = 0;
+}
+function carLodRelease(agent){
+  if(!carLod || agent.lodSlot === undefined || agent.lodSlot === null) return;
+  carLodHide(agent.lodSlot);
+  carLod.meshes.forEach(m=>{ m.instanceMatrix.needsUpdate = true; });
+  carLod.free.push(agent.lodSlot);
+  agent.lodSlot = null;
 }
 // Le groupe de silhouettes suit la visibilité des voies de piétons (case à
 // cocher "Piétons", mode Architecte, Vue Globale...) — voir
 // applyAgentTypeVisibility() et activateGlobalView().
 function syncPedestrianLodVisibility(){
   if(pedLod) pedLod.group.visible = routes.some(r=> r.type==='pieton' && r.vehicleGroup.visible);
+  if(carLod) carLod.group.visible = routes.some(r=> r.type==='voiture' && r.vehicleGroup.visible);
 }
 // Nombre maximal de piétons en rig ANIMÉ complet (les plus proches de la caméra),
 // quelle que soit la taille de la foule : ~0,1 ms chacun (12 draw calls + mixer),
 // donc le coût des piétons proches reste borné même avec beaucoup de voies.
 const PED_MAX_FULL_RIGS = 70;
 const _pedCand = [];
+// Agents LOINTAINS (au-delà de AGENT_FAR_DIST de la caméra, quelques pixels à
+// l'écran) : leur avancée sur la voie (a.t) est calculée à chaque image, mais
+// leur position/orientation n'est recalculée qu'une image sur AGENT_FAR_STRIDE,
+// en décalé d'un agent à l'autre. Mesuré avec ~1 500 agents : le placement de
+// chacun (getPointAt/getTangentAt/lookAt) coûtait plusieurs ms par image.
+const AGENT_FAR_DIST_SQ = 600*600, AGENT_FAR_STRIDE = 8;
+let agentFrame = 0, agentPhase = 0;
 function tickAgents(dt){
+  agentFrame++;
   syncPedestrianLodVisibility();
-  let lodTouched = false;
+  let lodTouched = false, carLodTouched = false;
   _pedCand.length = 0;
+  _carCand.length = 0;
   for(const r of routes){
     const len = r.curve.getLength();
     if(len<=0) continue;
@@ -7990,6 +8086,8 @@ function tickAgents(dt){
     }
     r.agents.forEach((a)=>{
       a.t = (a.t + (r.speedFactor*a.speed*dt)/len) % 1;
+      if(a.phase === undefined) a.phase = agentPhase++ % AGENT_FAR_STRIDE;
+      if(a.far && (agentFrame + a.phase) % AGENT_FAR_STRIDE) return; // lointain : placé une image sur N
       // le wagon n'est jamais exactement à a.t : il traîne derrière de
       // wagonOffset mètres (converti en fraction de la longueur de la courbe).
       const wagonT = ((a.t - (a.wagonOffset||0)/len) % 1 + 1) % 1;
@@ -8006,6 +8104,7 @@ function tickAgents(dt){
         m.position.addScaledVector(side, lateral);
       }
       m.lookAt(m.position.clone().add(tangent));
+      a.far = m.position.distanceToSquared(camera.position) > AGENT_FAR_DIST_SQ;
       if(r.type==='pieton'){
         // LOD : le choix rig animé / silhouette se fait APRÈS la boucle, une fois
         // tous les piétons placés (plafond PED_MAX_FULL_RIGS sur les plus proches).
@@ -8014,7 +8113,14 @@ function tickAgents(dt){
           a.lodSlot = (lod && lod.free.length) ? lod.free.pop() : null; // null : pas de LOD (rig complet en permanence)
           if(a.lodSlot !== null) lodBump(lod, a.lodSlot);
         }
-        _pedCand.push({ a, m, d2: m.position.distanceToSquared(camera.position) });
+        _pedCand.push({ a, m, r, d2: m.position.distanceToSquared(camera.position) });
+      } else if(r.type==='voiture'){
+        if(a.lodSlot === undefined){
+          const lod = ensureCarLod();
+          a.lodSlot = lod.free.length ? lod.free.pop() : null; // null : pas de LOD (modèle complet en permanence)
+          if(a.lodSlot !== null && a.lodSlot + 1 > lod.hi){ lod.hi = a.lodSlot + 1; lod.meshes.forEach(mm=>{ mm.count = lod.hi; }); }
+        }
+        _carCand.push({ a, m, r, d2: m.position.distanceToSquared(camera.position) });
       } else if(a.mixer){
         a.mixer.update(dt);
       }
@@ -8032,17 +8138,42 @@ function tickAgents(dt){
       const near = a.lodSlot === null || (fullRigs < PED_MAX_FULL_RIGS && inRange);
       if(near){
         fullRigs++;
-        if(!m.visible) m.visible = true;
+        if(!m.visible){ m.visible = true; if(!m.parent) c.r.vehicleGroup.add(m); }
         if(a.lodSlot !== null && pedLod.shown[a.lodSlot]){ pedestrianLodHide(a.lodSlot); lodTouched = true; }
         if(a.mixer) a.mixer.update(dt); // avance le cycle de marche (bras/jambes) du piéton
       } else {
-        if(m.visible) m.visible = false;
+        // Silhouette : le rig est aussi DÉTACHÉ de la scène (rattaché quand il
+        // repasse en rig complet). Un piéton rigué compte ~20 objets (os
+        // compris) dont Three.js recalcule les matrices à CHAQUE image, même
+        // invisibles (un parent qui se met à jour force tous ses descendants) :
+        // mesuré, ~13 ms/image avec ~900 piétons. Sa position/orientation
+        // restent calculées (voir plus haut) pour la silhouette.
+        if(m.visible){ m.visible = false; if(m.parent) m.parent.remove(m); }
         pedestrianLodSet(a.lodSlot, m.position, m.quaternion, m.userData.pedColors);
         lodTouched = true;
       }
     }
   }
   if(lodTouched) pedLod.meshes.forEach(mm=>{ mm.instanceMatrix.needsUpdate = true; });
+  if(_carCand.length){
+    for(const c of _carCand) c.score = c.m.visible ? c.d2 * 0.6 : c.d2;
+    _carCand.sort((x, y)=> x.score - y.score);
+    let full = 0;
+    for(const c of _carCand){
+      const a = c.a, m = c.m;
+      const inRange = c.d2 < (m.visible ? CAR_FULL_FAR_SQ : CAR_FULL_DIST_SQ);
+      if(a.lodSlot === null || (full < CAR_MAX_FULL && inRange)){
+        full++;
+        if(!m.visible){ m.visible = true; if(!m.parent) c.r.vehicleGroup.add(m); }
+        if(a.lodSlot !== null && carLod.shown[a.lodSlot]){ carLodHide(a.lodSlot); carLodTouched = true; }
+      } else {
+        if(m.visible){ m.visible = false; if(m.parent) m.parent.remove(m); } // détachée : voir le LOD piétons
+        carLodSet(a.lodSlot, m.position, m.quaternion, m.userData.carColor);
+        carLodTouched = true;
+      }
+    }
+  }
+  if(carLodTouched) carLod.meshes.forEach(mm=>{ mm.instanceMatrix.needsUpdate = true; });
 }
 
 // Un train ne boucle pas en continu sur sa voie comme les autres véhicules :
@@ -8276,7 +8407,9 @@ renderUsageColorControls();
 // résultat part uniquement dans la console, pas de bannière — elle n'a de sens
 // que pour un import déclenché volontairement (bouton "Charger routes.json").
 // `opts.append` : ajoute aux voies existantes au lieu de les remplacer
-// (routes_contexte.json, voir loadContexte).
+// (routes_contexte.json, voir loadContexte). `opts.spacing` ({type: mètres}) :
+// nombre d'agents proportionnel à la longueur de la voie (sinon
+// ROUTE_TYPES[type].count, quelle que soit la longueur).
 function importRoutesFromJSON(data, sourceLabel, silent=false, opts={}){
   if(!opts.append) clearRoutes(); // routes.json remplace l'ensemble des voies existantes (évite les doublons avec l'import auto depuis le .glb)
   const empty = [], created = [];
@@ -8286,7 +8419,13 @@ function importRoutesFromJSON(data, sourceLabel, silent=false, opts={}){
     let type = 'voiture';
     for(const t of Object.keys(ROUTE_TYPES)){ if(key.includes(t)){ type=t; break; } }
     const points = pts.map(p=> ({ x:p[0], y:(p[1]??0.15), z:p[2] }));
-    createRoute(points, type, name);
+    let count;
+    if(opts.spacing && opts.spacing[type]){
+      let len = 0;
+      for(let i=1;i<points.length;i++) len += Math.hypot(points[i].x-points[i-1].x, points[i].z-points[i-1].z);
+      count = THREE.MathUtils.clamp(Math.round(len / opts.spacing[type]), 3, 30);
+    }
+    createRoute(points, type, name, { count });
     created.push(name);
   });
   const summary = `${sourceLabel} : ${created.length} voie(s) importée(s)${created.length?` (${created.join(', ')})`:''}.${empty.length?` ${empty.length} voie(s) vide(s) ignorée(s) : ${empty.join(', ')}`:''}`;
